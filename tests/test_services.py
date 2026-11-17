@@ -469,3 +469,25 @@ def test_dashboard_api(cfg, orch, media):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_youtube_package_and_tempo_matched_music(cfg, orch, media, tmp_path):
+    from gaming_ai_editor.engines import audio
+    from gaming_ai_editor.ffutil import probe
+
+    for bpm in (100, 150):
+        audio.generate_music(cfg.path("music") / f"track{bpm}.wav", 20, bpm=bpm, seed=bpm)
+    assert orch._music_info("x", 148)["path"].endswith("track150.wav")
+    assert orch._music_info("x", 102)["path"].endswith("track100.wav")
+    for f in cfg.path("music").glob("*"):
+        f.unlink()
+    cfg.data["short"]["enabled"] = False
+    report = orch.process_file(copy_in(cfg, media["long"]), ["long"])
+    out = report["outputs"][0]
+    yt = out["youtube"]
+    times = [c["t"] for c in yt["chapters"]]
+    assert times[0] == 0 and all(b - a >= 10 for a, b in zip(times, times[1:]))
+    assert yt["chapters_text"].startswith("0:00 Intro")
+    assert yt["chapters_text"] in report["metadata"]["description"]
+    thumb = Path(yt["thumbnail"])
+    assert thumb.exists() and probe(thumb).width == 1280

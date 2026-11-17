@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+import numpy as np
+
 MAX_XFADE_CLIPS = 24
 
 
@@ -23,6 +25,7 @@ class Segment:
     camera: dict = field(default_factory=dict)  # poussée, panoramique, tremblements...
     vfx: dict = field(default_factory=dict)  # fenêtres des effets image (temps du clip)
     caption: str = ""
+    role: str = ""  # "teaser" (cold open), "build", "climax" ou "" (format long)
 
     @property
     def duration(self) -> float:
@@ -69,27 +72,34 @@ class EditPlan:
     graphics: list = field(default_factory=list)  # chronologie de la couche graphique
     sfx: list = field(default_factory=list)  # effets sonores placés
     effects: dict = field(default_factory=dict)  # résumé des effets utilisés
+    transition_durations: list = field(default_factory=list)  # durée de chaque jonction
+    loop: bool = False  # fin coupée net (boucle TikTok) : pas de fondu final
+
+    def overlaps(self) -> list[float]:
+        """Durée de chevauchement de chaque jonction (0 pour une coupe franche)."""
+        n = max(0, len(self.segments) - 1)
+        if self.transition != "xfade" or n == 0:
+            return [0.0] * n
+        if len(self.transition_durations) == n:
+            return [float(d) for d in self.transition_durations]
+        return [self.transition_seconds] * n
 
     def offsets(self) -> list[float]:
         """Instant de début de chaque clip dans le montage."""
-        overlap = self.transition_seconds if self.transition == "xfade" else 0.0
+        laps = self.overlaps() + [0.0]
         out, acc = [], 0.0
-        for seg in self.segments:
+        for seg, lap in zip(self.segments, laps):
             out.append(acc)
-            acc += seg.out_duration - overlap
+            acc += seg.out_duration - lap
         return out
 
     def junctions(self) -> list[float]:
         """Instant visuel de chaque changement de clip (milieu de la transition)."""
-        overlap = self.transition_seconds if self.transition == "xfade" else 0.0
-        return [o + overlap / 2 for o in self.offsets()[1:]]
+        return [o + lap / 2 for o, lap in zip(self.offsets()[1:], self.overlaps())]
 
     @property
     def duration(self) -> float:
-        total = sum(s.out_duration for s in self.segments)
-        if self.transition == "xfade" and len(self.segments) > 1:
-            total -= (len(self.segments) - 1) * self.transition_seconds
-        return total
+        return sum(s.out_duration for s in self.segments) - sum(self.overlaps())
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -104,10 +114,55 @@ class EditPlan:
         return cls(segments=segments, **data)
 
 
-def _candidate(h: dict, source: str, duration: float, fc: dict) -> Segment:
+def _adaptive_bounds(h: dict, analysis: dict, fc: dict) -> tuple[float, float] | None:
+    """Bornes qui suivent l'action au lieu d'un décalage fixe.
+
+    Début : le moment le plus calme (ou un changement de plan) dans les secondes qui
+    précèdent l'action, pour qu'on voie la situation s'installer. Fin : quand l'intensité
+    est vraiment retombée, plus un court temps de respiration.
+    """
+    score = np.asarray(analysis.get("score") or [], dtype=np.float64)
+    w = float(analysis.get("window") or 0.5)
+    if score.size < 8:
+        return None
+    duration = float(analysis["duration"])
+    base = float(np.median(score))
+    k_peak = min(score.size - 1, int(h["peak"] / w))
+    top = max(float(score[k_peak]), base + 1e-3)
+    lead_min, lead_max = float(fc.get("lead_min", 0.8)), float(fc.get("lead_max", 3.5))
+    tail_max = float(fc.get("tail_max", 4.0))
+    lo, hi = max(0.0, h["start"] - lead_max), max(0.0, h["start"] - lead_min)
+    a, b = int(lo / w), max(int(lo / w) + 1, int(hi / w) + 1)
+    window = score[a:b]
+    start = lo + float(np.argmin(window)) * w if window.size else lo
+    cuts = [c for c in analysis.get("scene_cuts") or [] if lo <= c <= hi]
+    if cuts:  # un changement de plan est le meilleur point d'entrée
+        start = min(cuts, key=lambda c: abs(c - start))
+    settle = base + 0.35 * (top - base)
+    k = min(score.size - 1, int(h["end"] / w))
+    limit = min(score.size - 1, int((h["end"] + tail_max) / w))
+    calm = 0
+    while k < limit and calm < 2:
+        calm = calm + 1 if score[k] < settle else 0
+        k += 1
+    end = max(h["end"] + 0.6, (k - calm) * w + 0.4)
+    near = [c for c in analysis.get("scene_cuts") or [] if h["end"] + 0.3 <= c <= end + 0.6]
+    if near:  # on coupe sur le changement de plan plutôt qu'au milieu d'un plan
+        end = min(near)
+    return max(0.0, start), min(duration, end)
+
+
+def _candidate(h: dict, source: str, duration: float, fc: dict,
+               analysis: dict | None = None) -> Segment:
     clip_min, clip_max = float(fc["clip_min"]), float(fc["clip_max"])
-    start = max(0.0, h["start"] - float(fc["pre_roll"]))
-    end = min(duration, h["end"] + float(fc["post_roll"]))
+    bounds = None
+    if analysis is not None and fc.get("bounds", "adaptive") == "adaptive":
+        bounds = _adaptive_bounds(h, analysis, fc)
+    if bounds:
+        start, end = bounds
+    else:
+        start = max(0.0, h["start"] - float(fc["pre_roll"]))
+        end = min(duration, h["end"] + float(fc["post_roll"]))
     if end - start > clip_max:
         start = max(start, min(h["start"] - float(fc["pre_roll"]), h["peak"] - 0.6 * clip_max))
         start = max(0.0, start)
@@ -176,7 +231,7 @@ def build_plan(fmt: str, analyses: list[dict], cfg, title: str = "") -> EditPlan
             if h.get("label") == "menu" and any(x.get("label") != "menu"
                                                  for x in a["highlights"]):
                 continue  # on ne monte pas un menu tant qu'il reste du jeu
-            cand = _candidate(h, a["path"], float(a["duration"]), fc)
+            cand = _candidate(h, a["path"], float(a["duration"]), fc, a)
             for u0, u1 in ui:  # rogne les bords qui débordent sur un menu
                 if u0 <= cand.start < u1 < cand.peak:
                     cand.start = u1
@@ -246,14 +301,48 @@ def build_plan(fmt: str, analyses: list[dict], cfg, title: str = "") -> EditPlan
 
     order = {a["path"]: i for i, a in enumerate(analyses)}
     chosen.sort(key=lambda s: (order[s.source], s.start))
-    if fmt == "short" and fc.get("hook_first") and len(chosen) > 2:
+    structure = fc.get("structure", "story") if fmt == "short" else "chrono"
+    if structure == "story" and len(chosen) >= 2:
+        chosen = _story_order(chosen, plan, max_s)
+    elif structure == "best_first" and len(chosen) > 2:
         hook = max(chosen, key=lambda s: s.score)
         chosen.remove(hook)
         chosen.insert(0, hook)
         plan.notes.append("Accroche : le moment le plus fort est placé en ouverture.")
+    plan.loop = fmt == "short" and bool(fc.get("loop_ending", False))
     plan.segments = chosen
     _finalize(plan, durations)
     return plan
+
+
+def _story_order(chosen: list[Segment], plan: EditPlan, max_s: float) -> list[Segment]:
+    """Cold open (éclat du meilleur moment, coupé avant sa résolution) → montée
+    chronologique → climax en entier à la fin."""
+    climax = max(chosen, key=lambda s: s.score)
+    build = [s for s in chosen if s is not climax]
+    for s in build:
+        s.role = "build"
+    climax.role = "climax"
+    t_start = max(climax.start, climax.peak - 1.6)
+    t_end = min(climax.end, climax.peak + 0.35)
+    ordered = build + [climax]
+    if t_end - t_start >= 1.2:
+        teaser = Segment(climax.source, t_start, t_end, climax.score, climax.label,
+                         climax.peak, role="teaser")
+        ordered = [teaser] + ordered
+        plan.notes.append("Structure : cold open sur le meilleur moment, montée, climax à la fin.")
+    else:
+        plan.notes.append("Structure : montée chronologique, climax à la fin.")
+    overlap = plan.transition_seconds if plan.transition == "xfade" else 0.0
+    total = sum(s.duration for s in ordered) - overlap * (len(ordered) - 1)
+    while total > max_s and build:  # la durée maximale reste respectée
+        longest = max(build, key=lambda s: s.duration)
+        cut = min(total - max_s, longest.duration - 2.0)
+        if cut <= 0:
+            break
+        longest.end -= cut
+        total -= cut
+    return ordered
 
 
 def _finalize(plan: EditPlan, durations: dict[str, float]) -> None:

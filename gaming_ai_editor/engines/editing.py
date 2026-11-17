@@ -193,7 +193,8 @@ class Director:
                 elif kind == "burst":
                     fx += ["combo", "glitch", "sfx_glitch"]
                 elif kind == "flash":
-                    fx += ["glow", "punch_soft", "sfx_impact"]
+                    # le jeu flashe déjà : un halo en plus surexpose l'image
+                    fx += ["punch_soft", "sfx_impact"]
                 elif kind == "rush":
                     fx += ["motion_blur", "sfx_whoosh"]
                 if {"shake", "glitch", "distortion"} & set(fx):
@@ -212,11 +213,83 @@ class Director:
             seg.events = chosen
 
     # -- 2. moment fort : ralenti -------------------------------------------------
+    def ceiling(self, seg) -> float:
+        """Fin maximale d'un clip : fin de la source, et jamais dans un menu / écran fixe."""
+        a = self.by_path.get(seg.source, {})
+        limit = float(a.get("duration", seg.end))
+        for u0, u1 in a.get("ui_windows") or []:
+            if u0 > seg.peak:
+                limit = min(limit, u0)
+        return max(limit, seg.end) if limit < seg.end else limit
+
+    def drop_dead_clips(self) -> None:
+        """Retire les clips de montée courts où rien ne se passe (aucun événement)."""
+        plan = self.plan
+        for seg in list(plan.segments):
+            if seg.role == "build" and not seg.events and seg.duration < 3.0:
+                if plan.duration - seg.out_duration >= plan.min_seconds:
+                    plan.segments.remove(seg)
+                    plan.notes.append(f"Clip sans action retiré ({seg.start:.1f}-{seg.end:.1f} s).")
+
+    def vary_durations(self) -> None:
+        """Jamais deux clips de durée proche (±20 %) à la suite : on raccourcit ou allonge
+        l'un des deux d'un nombre entier de temps, ce qui garde les coupes sur le tempo.
+        Le cold open et le climax ne sont jamais modifiés."""
+        m = self.plan.music
+        beat = 60.0 / float(m["bpm"]) if m.get("bpm") else 0.5
+        segs = self.plan.segments
+
+        def distinct(x: float, y: float) -> bool:
+            return abs(x - y) / max(x, y, 1e-6) >= 0.2
+
+        def try_adjust(i: int) -> bool:
+            seg = segs[i]
+            if seg.role in ("teaser", "climax") or i in (0, len(segs) - 1):
+                return False
+            floor = max([seg.start + 1.5] + [e["t"] + 0.6 for e in seg.events]
+                        + ([seg.ramp[1] + 0.5] if seg.ramp else []))
+            ceil = self.ceiling(seg) - 0.05
+            d = seg.out_duration
+            # raccourcir d'abord (plus nerveux), puis allonger ; jusqu'à 8 temps
+            for steps in [-n for n in range(1, 9)] + list(range(1, 9)):
+                new_end, new_d = seg.end + steps * beat, d + steps * beat
+                if not floor <= new_end <= ceil:
+                    continue
+                if distinct(new_d, segs[i - 1].out_duration) and \
+                        distinct(new_d, segs[i + 1].out_duration):
+                    seg.end = round(new_end, 6)
+                    return True
+            # sinon : raccourcir l'entrée en matière (le calme avant l'action), toujours
+            # d'un nombre entier de temps pour que les coupes suivantes restent sur le tempo
+            first = min([e["t"] for e in seg.events] + [seg.peak])
+            latest = min(first - 0.8, seg.ramp[0] - 0.5 if seg.ramp else first)
+            for n in range(1, 9):
+                new_start, new_d = seg.start + n * beat, d - n * beat
+                if new_start > latest or seg.end - new_start < 1.5:
+                    break
+                if distinct(new_d, segs[i - 1].out_duration) and \
+                        distinct(new_d, segs[i + 1].out_duration):
+                    seg.start = round(new_start, 6)
+                    return True
+            return False
+
+        for k in range(1, len(segs)):
+            if not distinct(segs[k - 1].out_duration, segs[k].out_duration):
+                try_adjust(k) or try_adjust(k - 1)
+        while self.plan.duration > self.plan.max_seconds and len(segs) > 2:
+            longest = max(segs[1:-1], key=lambda s: s.duration)
+            if longest.duration - beat < 2.0:
+                break
+            longest.end -= beat
+
     def choose_ramps(self) -> None:
         st = self.cfg["style"]
         n = int(st["max_ramps_short"] if self.short else st["max_ramps_long"])
         cands = []
-        for seg in self.plan.segments:
+        segments = self.plan.segments
+        if any(s.role == "climax" for s in segments):  # structure narrative : ralenti au climax
+            segments = [s for s in segments if s.role == "climax"]
+        for seg in segments:
             for ev in seg.events:
                 if ev["kind"] in ("explosion", "impact", "shot") and \
                         ev["t"] - seg.start >= 1.2 and seg.end - ev["t"] >= 1.2:
@@ -241,7 +314,8 @@ class Director:
             self.plan.music = {"mode": "user", "path": info["path"], "bpm": info["bpm"],
                                "beats": info["beats"]}
         elif st.get("music_generate", True) and self.cfg["music"]["enabled"]:
-            self.plan.music = {"mode": "generated", "bpm": self.dna["bpm"]}
+            self.plan.music = {"mode": "generated", "bpm": self.dna["bpm"],
+                               "loop": bool(self.plan.loop)}
         else:
             self.plan.music = {"mode": "none"}
             return
@@ -265,7 +339,7 @@ class Director:
             new_end = seg.end + delta
             if new_end < floor:
                 new_end += beat
-            if new_end > durations.get(seg.source, new_end) - 0.05:
+            if new_end > min(durations.get(seg.source, new_end), self.ceiling(seg)) - 0.05:
                 new_end -= beat
             if new_end >= floor:
                 seg.end = round(new_end, 6)
@@ -340,20 +414,47 @@ class Director:
 
     # -- 5. transitions -----------------------------------------------------------------
     def choose_transitions(self) -> None:
-        if self.plan.transition != "xfade" or len(self.plan.segments) < 2:
-            self.plan.transitions = []
+        """Coupes sèches pendant la montée, transitions visibles entre les séquences.
+
+        Visible : sortie du cold open, entrée dans le climax, et au plus une jonction sur
+        trois pendant la montée. Jamais deux fois la même transition de suite.
+        """
+        n = len(self.plan.segments)
+        if self.plan.transition != "xfade" or n < 2:
+            self.plan.transitions, self.plan.transition_durations = [], []
             return
         family = TRANSITION_FAMILIES[self.dna["transitions"]]
-        out, last = [], None
-        for k in range(len(self.plan.segments) - 1):
-            nxt = self.plan.segments[k + 1]
+        visible_len = float(self.plan.transition_seconds) or 0.3
+        names, durations, last, since_visible = [], [], None, 0
+        for k in range(n - 1):
+            cur, nxt = self.plan.segments[k], self.plan.segments[k + 1]
             strong = any(e["kind"] == "explosion" for e in nxt.events)
-            options = [t for t in family if t != last]
-            choice = "fadewhite" if strong and "fadewhite" in family and last != "fadewhite" \
-                else self.rng.choice(options)
-            out.append(choice)
-            last = choice
-        self.plan.transitions = out
+            if cur.role == "teaser":
+                visible, choice = True, "fadewhite"
+            elif nxt.role == "climax":
+                visible = True
+                choice = self.rng.choice([t for t in ("zoomin", "fadewhite", "hblur")
+                                          if t != last])
+            elif not self.short or not cur.role:
+                visible = True
+                choice = None
+            else:  # montée : coupe sèche, sauf de temps en temps
+                visible = since_visible >= 2 and self.rng.random() < 0.5
+                choice = None
+            if visible:
+                if choice is None:
+                    options = [t for t in family if t != last]
+                    choice = "fadewhite" if strong and "fadewhite" in options else \
+                        self.rng.choice(options)
+                names.append(choice)
+                durations.append(round(visible_len * (1.4 if nxt.role == "climax" else 1.0), 3))
+                since_visible = 0
+            else:  # « coupe » : fondu de 2 images, imperceptible, garde la chaîne xfade
+                names.append("fade")
+                durations.append(round(2.0 / self.plan.fps, 4))
+                since_visible += 1
+            last = names[-1]
+        self.plan.transitions, self.plan.transition_durations = names, durations
 
     # -- 6. couche graphique et sound design ------------------------------------------------
     def build_graphics_and_sound(self) -> None:
@@ -370,7 +471,9 @@ class Director:
             g.append({"type": "progress", "start": 0.0, "end": D})
             hook = self.texts.get("hook") or self.rng.choice(HOOKS)
             plan.hook = str(hook)[:48]
-            g.append({"type": "hook", "start": 0.1, "end": min(2.8, D * 0.3), "text": plan.hook})
+            teaser = plan.segments[0].out_duration if plan.segments[0].role == "teaser" else 0.0
+            hook_end = min(max(2.8, teaser + 0.6), D * 0.3)
+            g.append({"type": "hook", "start": 0.1, "end": hook_end, "text": plan.hook})
             for w in range(len(plan.hook.split())):
                 cues.append({"t": 0.1 + 0.09 * w, "kind": "swoosh", "gain": 0.5})
         else:
@@ -390,9 +493,11 @@ class Director:
                 g.append({"type": "scoreboard", "start": off + 0.4, "end": off + 3.4,
                           "index": i + 1, "total": len(offsets),
                           "score": round(min(1.0, 0.35 + seg.score / 3), 3)})
-        # transitions : whoosh calé sur la jonction
-        for jt in plan.junctions():
-            cues.append({"t": jt, "kind": "whoosh", "gain": 0.8, "pan": self.rng.uniform(-0.5, 0.5)})
+        # transitions visibles : whoosh calé sur la jonction ; coupes sèches : rien
+        for jt, lap in zip(plan.junctions(), plan.overlaps()):
+            if lap >= 0.15:
+                cues.append({"t": jt, "kind": "whoosh", "gain": 0.8,
+                             "pan": self.rng.uniform(-0.5, 0.5)})
         last_word, slots = -10.0, []
         captions = list(self.texts.get("captions") or [])
         for i, seg in enumerate(plan.segments):
@@ -457,7 +562,7 @@ class Director:
                 if "climax" in fx:
                     cues.append({"t": t, "kind": "riser", "gain": 0.8})
                     cues.append({"t": t, "kind": "sub_drop", "gain": 0.9})
-        if self.short and st.get("subscribe_outro", True) and D > 8:
+        if self.short and st.get("subscribe_outro", True) and D > 8 and not plan.loop:
             g.append({"type": "subscribe", "start": D - 2.6, "end": D - 0.1})
             cues.append({"t": D - 2.6 + 0.85, "kind": "click", "gain": 0.8})
         plan.graphics = sorted(g, key=lambda x: x["start"])
@@ -492,9 +597,12 @@ class Director:
         if not self.cfg["style"]["enabled"] or not plan.segments:
             return
         self.choose_events()
+        self.drop_dead_clips()
         self.choose_ramps()
+        self.choose_transitions()  # avant la musique : les coupes se calent sur le tempo
         self.plan_music()
-        self.choose_transitions()
+        if self.short:
+            self.vary_durations()
         self.build_camera()
         self.finalize_music()
         self.build_graphics_and_sound()

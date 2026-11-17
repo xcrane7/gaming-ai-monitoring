@@ -15,6 +15,7 @@ class Cue:
     start: float
     end: float
     text: str
+    words: list | None = None  # [(début, fin, mot)] si l'horodatage par mot est connu
 
 
 def _seconds(match: re.Match) -> float:
@@ -44,12 +45,41 @@ def remap_cues(plan: EditPlan, cues_by_source: dict[str, list[Cue]]) -> list[Cue
         for cue in cues_by_source.get(seg.source, []):
             start, end = max(cue.start, seg.start), min(cue.end, seg.end)
             if end - start >= 0.3:
+                words = None
+                if cue.words:
+                    words = [(offset + seg.map_time(a), offset + seg.map_time(b), w)
+                             for a, b, w in cue.words if seg.start <= a and b <= seg.end]
                 out.append(Cue(offset + seg.map_time(start), offset + seg.map_time(end),
-                               cue.text))
+                               cue.text, words or None))
     out.sort(key=lambda c: c.start)
     for a, b in zip(out, out[1:]):  # pas de chevauchement à l'écran
         if a.end > b.start:
             a.end = max(a.start + 0.2, b.start - 0.02)
+    return out
+
+
+def words_from_cues(cues: list[Cue]) -> list[dict]:
+    """Découpe des répliques en mots horodatés (temps du montage).
+
+    Avec Whisper, l'horodatage réel de chaque mot est utilisé ; sinon la durée de la
+    réplique est répartie proportionnellement à la longueur des mots.
+    """
+    out: list[dict] = []
+    for line, cue in enumerate(cues):
+        if cue.words:
+            out += [{"t0": round(a, 3), "t1": round(b, 3), "w": w.strip(), "line": line}
+                    for a, b, w in cue.words if w.strip()]
+            continue
+        words = cue.text.split()
+        if not words:
+            continue
+        weights = [len(w) + 2 for w in words]
+        span = max(cue.end - cue.start, 0.05)
+        t = cue.start
+        for w, k in zip(words, weights):
+            d = span * k / sum(weights)
+            out.append({"t0": round(t, 3), "t1": round(t + d, 3), "w": w, "line": line})
+            t += d
     return out
 
 
@@ -159,8 +189,11 @@ def transcribe(path: str | Path, model: str = "small", language: str | None = No
         wm = WhisperModel(model, device="cuda", compute_type="float16")
     except Exception:
         wm = WhisperModel(model, device="cpu", compute_type="int8")
-    segments, _ = wm.transcribe(str(path), language=language, vad_filter=True)
-    return [Cue(float(s.start), float(s.end), s.text.strip()) for s in segments if s.text.strip()]
+    segments, _ = wm.transcribe(str(path), language=language, vad_filter=True,
+                                word_timestamps=True)
+    return [Cue(float(s.start), float(s.end), s.text.strip(),
+                [(float(w.start), float(w.end), w.word) for w in (s.words or [])] or None)
+            for s in segments if s.text.strip()]
 
 
 def cues_for_source(source: str | Path, cfg: dict) -> tuple[list[Cue], str]:

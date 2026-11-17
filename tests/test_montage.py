@@ -109,7 +109,9 @@ def test_render_vertical_with_music_sfx_subtitles(cfg, media, analysis_short):
     result = Renderer(cfg).render(plan, cfg.output_dir / "v.mp4", cfg.work_dir / "v",
                                   cues_by_source=cues)
     assert result["music"] == "loop.wav" and result["sfx"] == len(plan.segments) - 1
-    assert result["subtitles"] == "1 répliques"
+    # structure narrative : le cold open rejoue le climax, la réplique peut apparaître 2 fois
+    expected = len(subs.remap_cues(plan, cues))
+    assert expected >= 1 and result["subtitles"] == f"{expected} répliques"
     info = probe(result["path"])
     assert (info.width, info.height) == (360, 640) and info.has_audio
     report = run_qa(result["path"], plan.to_dict(), cfg, sha256(media["short"]) == before)

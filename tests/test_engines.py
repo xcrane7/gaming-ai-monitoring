@@ -123,6 +123,15 @@ def test_intelligence_finds_events_and_menus(tmp_path):
 
 
 # -- 7. Graphics ----------------------------------------------------------------------
+def test_long_impact_word_stays_inside_the_frame():
+    ctx = graphics.Context(360, 640, 30, 3.0)
+    els = graphics.build([{"type": "word", "start": 0, "end": 2, "text": "Dernière déflagration",
+                           "style": "slam", "size": 150, "angle": -6}], ctx)
+    alpha = np.asarray(graphics.render_frame(els, ctx, 1.0))[..., 3]
+    cols = np.where(alpha.max(axis=0) > 0)[0]
+    assert cols.min() > 0 and cols.max() < 359, "le mot ne doit pas sortir de l'image"
+
+
 def test_every_graphic_element_renders(tmp_path):
     ctx = graphics.Context(360, 640, 30, 3.0, beats=[0.5, 1.0, 1.5], clips=[0, 1.5])
     timeline = [{"type": t, "start": 0.2, "end": 2.8} for t in
@@ -137,6 +146,9 @@ def test_every_graphic_element_renders(tmp_path):
         {"type": "sparks", "start": 1.0, "x": 0.5, "y": 0.5},
         {"type": "shockwave", "start": 1.0, "x": 0.5, "y": 0.5},
         {"type": "explosion", "start": 1.2, "x": 0.5, "y": 0.5},
+        {"type": "captions", "start": 0.2, "end": 2.6,
+         "words": [{"t0": 0.2, "t1": 0.9, "w": "Regarde", "line": 0},
+                   {"t0": 0.9, "t1": 2.6, "w": "ça", "line": 0}]},
     ]
     timeline[2]["hits"] = [0.3, 0.6, 0.9]
     assert set(graphics.ELEMENTS) <= {i["type"] for i in timeline}
@@ -281,3 +293,145 @@ def test_resources_snapshot():
     ok, why = resources.has_room(0.0, 0.0)
     assert ok, why
     assert resources.has_room(10_000.0, 0.0)[0] is False
+
+
+# -- Anti-robot : bornes adaptatives, structure narrative, légendes, emballage ----------
+def _score_analysis(path="/x/v.mp4"):
+    """Courbe d'intensité synthétique : calme, montée, pic à 20 s, retombée lente."""
+    w = 0.5
+    score = [0.2] * 120
+    for k in range(34, 37):
+        score[k] = 0.05  # vrai calme juste avant l'action (17-18,5 s)
+    for k in range(37, 48):  # action de 18,5 à 24 s, pic à 20 s
+        score[k] = 3.0 if k == 40 else 2.0
+    return {"path": path, "duration": 60.0, "window": w, "score": score, "fps": 30,
+            "scene_cuts": [], "highlights": [], "events": []}
+
+
+def test_adaptive_bounds_follow_the_action(cfg):
+    from gaming_ai_editor.editor.plan import _adaptive_bounds
+
+    a = _score_analysis()
+    h = {"start": 19.5, "end": 21.0, "peak": 20.0, "score": 3.0}
+    start, end = _adaptive_bounds(h, a, cfg["short"])
+    assert 17.0 <= start <= 18.5, "le clip démarre dans le calme qui précède"
+    assert 24.0 <= end <= 25.0, "le clip attend que l'action retombe"
+    a["score"][48:60] = [2.0] * 12  # action qui ne retombe pas : plafond tail_max (4 s)
+    _, end = _adaptive_bounds(h, a, cfg["short"])
+    assert end == pytest.approx(21.0 + cfg["short"]["tail_max"] + 0.4)
+    a["score"][48:60] = [0.2] * 12
+    a["scene_cuts"] = [16.6]
+    start, _ = _adaptive_bounds(h, a, cfg["short"])
+    assert start == 16.6, "un changement de plan proche est le meilleur point d'entrée"
+    fixed = dict(cfg["short"], bounds="fixed")
+    from gaming_ai_editor.editor.plan import _candidate
+
+    seg = _candidate(h, a["path"], 60.0, fixed, a)
+    assert seg.start == pytest.approx(19.5 - cfg["short"]["pre_roll"])
+
+
+def test_story_structure_cold_open_build_climax_loop(cfg):
+    a = _fake_analysis("/x/video.mp4")
+    plan = build_plan("short", [a], cfg)
+    roles = [s.role for s in plan.segments]
+    assert roles[0] == "teaser" and roles[-1] == "climax" and set(roles[1:-1]) == {"build"}
+    teaser, climax = plan.segments[0], plan.segments[-1]
+    assert teaser.source == climax.source and teaser.end <= climax.peak + 0.4
+    assert plan.loop is True
+    editing.direct(plan, [a], cfg, None, "clé", None)
+    assert all(not s.ramp for s in plan.segments[:-1]) and plan.segments[-1].ramp
+    laps = plan.overlaps()
+    assert laps[0] >= 0.15 and laps[-1] >= 0.15, "transitions visibles entre séquences"
+    assert any(lap < 0.1 for lap in laps[1:-1]) or len(laps) < 3, "coupes sèches dans la montée"
+    assert not any(g["type"] == "subscribe" for g in plan.graphics), "boucle : pas d'outro"
+    durs = [s.out_duration for s in plan.segments]
+    assert all(abs(a - b) / max(a, b) >= 0.2 for a, b in zip(durs[1:-2], durs[2:-1])), durs
+    from gaming_ai_editor.tools.critic import checklist
+
+    assert all(c["ok"] for c in checklist(plan, plan.duration)
+               if c["point"].startswith(("climax", "accroche", "fin")))
+    cfg.data["short"]["structure"] = "chrono"
+    plan = build_plan("short", [a], cfg)
+    starts = [s.start for s in plan.segments]
+    assert starts == sorted(starts) and not any(s.role for s in plan.segments)
+
+
+def test_beat_sync_and_variation_never_extend_into_a_menu(cfg):
+    a = _fake_analysis("/x/video.mp4")
+    a["ui_windows"] = [[33.6, 40.0]]  # écran fixe juste après le 2e moment
+    plan = build_plan("short", [a], cfg)
+    editing.direct(plan, [a], cfg, None, "menu", None)
+    for seg in plan.segments:
+        assert not any(u0 < seg.end - 1e-6 and seg.peak < u0 for u0, _ in a["ui_windows"]), \
+            (seg.start, seg.end)
+
+
+def test_offsets_with_mixed_transition_durations():
+    plan = EditPlan("short", 360, 640, 30, transition="xfade", transition_seconds=0.3,
+                    segments=[Segment("a", 0, 4), Segment("a", 10, 13), Segment("a", 20, 25)],
+                    transition_durations=[0.3, 0.0667])
+    assert plan.offsets() == pytest.approx([0.0, 3.7, 6.6333], abs=1e-3)
+    assert plan.duration == pytest.approx(12 - 0.3667, abs=1e-3)
+    assert plan.junctions()[0] == pytest.approx(3.85)
+
+
+def test_loop_render_has_no_fade_and_mixed_transitions(cfg, tmp_path):
+    src = tmp_path / "g.mp4"
+    synth.make_gameplay(src, duration=30, width=480, height=270, fps=30, cut_every=None,
+                        bursts=[(5, 5.6), (14, 14.6), (22, 22.6)], noise=30)
+    plan = EditPlan("short", 360, 640, 30, transition="xfade", transition_seconds=0.3,
+                    segments=[Segment(str(src), 3, 7), Segment(str(src), 12, 16),
+                              Segment(str(src), 20, 25)],
+                    transition_durations=[0.3, 2 / 30], transitions=["fadewhite", "fade"],
+                    loop=True)
+    res = Renderer(cfg).render(plan, cfg.output_dir / "loop.mp4", cfg.work_dir / "loop")
+    assert probe(res["path"]).duration == pytest.approx(plan.duration, abs=0.1)
+    from gaming_ai_editor.qa.motion import _gray_frames
+
+    luma, _ = _gray_frames(Path(res["path"]))
+    assert luma[-1] > 0.6 * luma[len(luma) // 2], "pas de fondu au noir en boucle"
+
+
+def test_word_captions_from_subtitles(cfg, tmp_path):
+    from gaming_ai_editor.editor.subtitles import Cue, words_from_cues
+
+    words = words_from_cues([Cue(1.0, 3.0, "Attention il arrive"), Cue(3.2, 4.0, "Boom")])
+    assert [w["w"] for w in words] == ["Attention", "il", "arrive", "Boom"]
+    assert words[0]["t0"] == 1.0 and words[2]["t1"] == pytest.approx(3.0)
+    assert words[0]["t1"] - words[0]["t0"] > words[1]["t1"] - words[1]["t0"]
+    timed = words_from_cues([Cue(0, 2, "a b", [(0.1, 0.4, " a"), (1.5, 1.9, " b")])])
+    assert timed[1]["t0"] == 1.5, "horodatage réel par mot (Whisper) prioritaire"
+    caps = graphics.Captions({"type": "captions", "start": 1, "end": 4, "words": words},
+                             graphics.Context(360, 640, 30, 5))
+    # 16 caractères au plus à l'écran : « Attention il arrive » (19) est coupé en deux
+    assert [[w["w"] for w in c] for c in caps.chunks] == [["Attention", "il"], ["arrive"],
+                                                          ["Boom"]]
+    # rendu réel : les légendes passent dans la couche graphique
+    src = tmp_path / "s.mp4"
+    synth.make_gameplay(src, duration=12, width=480, height=270, fps=30, cut_every=None,
+                        bursts=[(4, 4.6)], noise=30)
+    from gaming_ai_editor.analysis import analyze_video
+
+    a = analyze_video(src, cfg["analysis"])
+    plan = EditPlan("short", 360, 640, 30, segments=[Segment(str(src), 1, 9, 1, "", 4.3)])
+    editing.direct(plan, [a], cfg, None, "cap", None)
+    res = Renderer(cfg).render(plan, cfg.output_dir / "cap.mp4", cfg.work_dir / "cap",
+                               cues_by_source={str(src): [Cue(2.0, 4.0, "Regarde bien ça")]})
+    assert "mots animés" in res["subtitles"]
+    assert any(g["type"] == "captions" for g in plan.graphics)
+
+
+def test_critic_tool_produces_frames_and_checklist(cfg, tmp_path):
+    from gaming_ai_editor.tools.critic import critique
+
+    src = tmp_path / "g.mp4"
+    synth.make_gameplay(src, duration=20, width=480, height=270, fps=30, cut_every=None,
+                        bursts=[(5, 5.6)], noise=20)
+    plan = EditPlan("short", 360, 640, 30, transition="xfade", transition_seconds=0.3,
+                    segments=[Segment(str(src), 2, 7), Segment(str(src), 10, 14)],
+                    transitions=["fade"])
+    res = Renderer(cfg).render(plan, cfg.output_dir / "c.mp4", cfg.work_dir / "c")
+    rep = critique(Path(res["path"]), tmp_path / "critique", plan.to_dict(), Path(res["path"]))
+    for key in ("planche", "clip1_milieu", "jonction1_avant", "avant_apres"):
+        assert Path(rep["images"][key]).exists(), key
+    assert isinstance(rep["checklist"], list) and rep["score_checklist"]

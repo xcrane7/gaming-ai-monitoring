@@ -65,6 +65,12 @@ effets sert de second essai automatique si un rendu animé échoue à la QA.
 | Moment le plus fort | speed ramp + smooth zoom | glitch d'entrée + flash | mot « slam » | riser + sub drop, musique filtrée puis drop |
 | Kill / headshot / victoire (**Gemini uniquement**) | — | — | kill feed, tampon HEADSHOT, bandeau VICTOIRE | ding |
 
+Structure d'un Short (`short.structure = "story"`) : cold open de 1,5 à 2 s sur le meilleur
+moment (coupé avant sa résolution, avec l'accroche), montée chronologique en coupes sèches,
+clips sans action retirés, durées variées (jamais deux à ±20 % de suite), climax en entier à la
+fin avec ralenti et drop, fin en boucle. Bornes de chaque clip adaptées à l'action
+(`_adaptive_bounds`). Outil de relecture : `python -m gaming_ai_editor.tools.critic`.
+
 Règles anti-saturation : deux effets lourds (tremblement, glitch, distorsion)
 jamais à moins de 1,5 s ; un mot d'impact au plus toutes les 1,6 s en court,
 3 s en long ; trois notifications empilées au maximum ; un seul ralenti par Short.

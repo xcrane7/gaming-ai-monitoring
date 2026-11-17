@@ -308,7 +308,7 @@ def music_grid(duration: float, bpm: float, drop_at: float | None) -> float:
 
 def generate_music(path: str | Path, duration: float, bpm: float = 140.0,
                    drop_at: float | None = None, calm: tuple[float, float] | None = None,
-                   seed: int = 0, energy: float = 1.0) -> dict:
+                   seed: int = 0, energy: float = 1.0, fade_out: float = 1.5) -> dict:
     """Morceau de la durée du montage. Retourne {path, bpm, beats, downbeats}.
 
     - `drop_at` : instant du drop (la mesure entière démarre là) ; montée de 2 mesures avant.
@@ -422,7 +422,7 @@ def generate_music(path: str | Path, duration: float, bpm: float = 140.0,
             w[max(a, b - ramp):b] = np.linspace(1, 0, b - max(a, b - ramp))
             mix = mix * (1 - w) + muffled * w * 0.8
     mix = _norm(np.tanh(mix * 1.2), 0.85)
-    fade = int(min(1.5, duration / 4) * SR)
+    fade = max(1, int(min(fade_out, duration / 4) * SR))
     mix[-fade:] *= np.linspace(1, 0, fade)
     left = mix
     right = np.roll(mix, int(0.008 * SR)) * 0.96 + mix * 0.04  # légère largeur stéréo

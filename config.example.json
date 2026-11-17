@@ -1,15 +1,63 @@
 {
   "_aide": "Copie ce fichier en config.json et ne garde que ce que tu veux changer. Tout le reste prend la valeur par defaut (voir gaming_ai_editor/config.py).",
-  "style": { "enabled": true, "channel_name": "", "accent_color": "", "hud": true },
-  "short": { "target_seconds": 45, "layout": "auto" },
-  "long": { "target_seconds": 480, "width": 1920, "height": 1080 },
-  "render": { "encoder": "auto", "max_fps": 60 },
-  "music": { "enabled": true, "volume_db": -20 },
-  "subtitles": { "mode": "auto", "whisper_model": "small", "language": "fr" },
+  "style": {
+    "enabled": true,
+    "channel_name": "",
+    "accent_color": "",
+    "hud": true
+  },
+  "short": {
+    "target_seconds": 45,
+    "layout": "auto",
+    "structure": "story",
+    "bounds": "adaptive",
+    "loop_ending": true
+  },
+  "long": {
+    "target_seconds": 480,
+    "width": 1920,
+    "height": 1080,
+    "bounds": "adaptive"
+  },
+  "render": {
+    "encoder": "auto",
+    "max_fps": 60
+  },
+  "music": {
+    "enabled": true,
+    "volume_db": -20
+  },
+  "subtitles": {
+    "mode": "auto",
+    "whisper_model": "small",
+    "language": "fr",
+    "style": "words"
+  },
   "ai": {
     "allow_paid_api": false,
-    "gemini": { "mode": "auto" },
-    "claude": { "mode": "auto" }
+    "gemini": {
+      "mode": "auto",
+      "free_tier_only": true,
+      "max_requests_per_day": 20
+    },
+    "claude": {
+      "mode": "auto"
+    },
+    "vision_order": [
+      "gemini",
+      "claude"
+    ]
   },
-  "research": { "enabled": true, "interval_hours": 6, "auto_integrate": true }
+  "research": {
+    "enabled": true,
+    "interval_hours": 6,
+    "auto_integrate": true
+  },
+  "_options": {
+    "short.structure": "story (cold open + montée + climax à la fin) | best_first | chrono",
+    "short.bounds / long.bounds": "adaptive (suit l'action) | fixed (pre_roll / post_roll)",
+    "short.loop_ending": "true : fin coupée net pour la relecture TikTok (pas de bouton d'abonnement)",
+    "subtitles.style": "words (mot à mot animé) | classic (sous-titres ASS)",
+    "ai.vision_order": "qui étiquette les moments forts : gemini (clé gratuite) puis claude (abonnement)"
+  }
 }

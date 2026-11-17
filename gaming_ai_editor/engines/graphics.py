@@ -22,6 +22,7 @@ t (courbes d'easing de motion.py), puis la couche transparente est encodée
     explosion       explosion complète : lueur, onde de choc, étincelles, débris
     embers          braises qui flottent (ambiance)
     subscribe       fin de vidéo : bouton « S'ABONNER » qui devient « ABONNÉ »
+    captions        sous-titres mot à mot, mot prononcé en couleur d'accent
 
 Icônes vectorielles dessinées par le programme : viseur, crâne, flamme,
 trophée, éclair, étoile, cloche.
@@ -316,7 +317,14 @@ class Word(Element):
         scale *= 1.0 - 0.25 * ease_in_cubic(leave)
         alpha *= 1.0 - leave
         scale *= 1.0 + 0.04 * c.beat_pulse(t)
-        paste(canvas, sprite, cx, cy, scale, angle, alpha)
+        # un texte long (souvent écrit par l'IA) est réduit pour tenir dans 90 % de la largeur
+        rad = math.radians(abs(angle))
+        width = sprite.width * math.cos(rad) + sprite.height * math.sin(rad)
+        fit = c.width * 0.9 / max(width, 1)
+        if style == "slide":
+            paste(canvas, sprite, cx, cy, min(scale, fit), angle, alpha)
+        else:  # le grossissement d'entrée peut dépasser, la taille finale non
+            paste(canvas, sprite, cx, cy, scale * min(1.0, fit), angle, alpha)
 
 
 class Hook(Element):
@@ -774,11 +782,62 @@ class Subscribe(Element):
                          outline=(0, 0, 0, 255), width=max(2, int(3 * s)))
 
 
+class Captions(Element):
+    """Sous-titres mot à mot : 1 à 3 mots à l'écran, le mot prononcé grossit et prend
+    la couleur d'accent (style karaoké des Shorts)."""
+    layer = 8
+    MAX_WORDS, MAX_CHARS = 3, 16
+
+    def __init__(self, item, ctx):
+        super().__init__(item, ctx)
+        words = item.get("words", [])
+        self.chunks: list[list[dict]] = []
+        cur: list[dict] = []
+        for w in words:
+            gap = cur and (w["t0"] - cur[-1]["t1"] > 0.6
+                           or w.get("line") != cur[-1].get("line"))  # jamais à cheval sur 2 répliques
+            too_long = cur and sum(len(x["w"]) + 1 for x in cur) + len(w["w"]) > self.MAX_CHARS
+            if cur and (len(cur) >= self.MAX_WORDS or gap or too_long):
+                self.chunks.append(cur)
+                cur = []
+            cur.append(w)
+        if cur:
+            self.chunks.append(cur)
+
+    def draw(self, canvas, draw, t):
+        c = self.ctx
+        chunk = next((ch for ch in self.chunks if ch[0]["t0"] <= t <= ch[-1]["t1"] + 0.15), None)
+        if not chunk:
+            return
+        size = int((74 if c.vertical else 58) * c.s)
+        y = c.height * (0.74 if c.vertical else 0.84)
+        gap = size * 0.2
+        sprites = []
+        for w in chunk:
+            active = w["t0"] <= t < w["t1"] + 0.02
+            fill = c.color("accent") if active else c.color("text")
+            sprites.append((w, active, text_sprite(w["w"].upper(), c.font, size, fill,
+                                                   max(4, size // 9), (0, 0, 0, 255),
+                                                   shadow=max(2, size // 14))))
+        total = sum(sp.width for _, _, sp in sprites) + gap * (len(sprites) - 1)
+        scale_fit = min(1.0, c.width * 0.9 / max(total, 1))
+        x = (c.width - total * scale_fit) / 2
+        enter = ease_out_back(min(1.0, (t - chunk[0]["t0"]) / 0.18), 2.0)
+        for w, active, sp in sprites:
+            pop = 1.0
+            if active:
+                pop = 1.0 + 0.18 * (1 - min(1.0, (t - w["t0"]) / 0.12))
+            width = sp.width * scale_fit
+            paste(canvas, sp, x + width / 2, y, scale_fit * pop * (0.6 + 0.4 * enter), 0,
+                  min(1.0, 0.4 + enter))
+            x += width + gap * scale_fit
+
+
 ELEMENTS = {
     "word": Word, "hook": Hook, "notify": Notify, "headshot": Headshot, "combo": Combo,
     "victory": Victory, "title": Title, "lower_third": LowerThird, "scoreboard": Scoreboard,
     "hud": Hud, "progress": Progress, "sparks": Particles, "shockwave": Shockwave,
-    "explosion": Explosion, "embers": Embers, "subscribe": Subscribe,
+    "explosion": Explosion, "embers": Embers, "subscribe": Subscribe, "captions": Captions,
 }
 
 

@@ -56,6 +56,12 @@ DEFAULTS: dict[str, Any] = {
         "transition": "xfade",  # "xfade" | "cut"
         "transition_seconds": 0.25,
         "hook_first": True,
+        # "story" : cold open + montée + climax à la fin ; "best_first" : meilleur moment
+        # en premier ; "chrono" : ordre chronologique
+        "structure": "story",
+        "bounds": "adaptive",  # "adaptive" (suit l'action) ou "fixed" (pre_roll/post_roll)
+        "lead_min": 0.8, "lead_max": 3.5, "tail_max": 4.0,
+        "loop_ending": True,  # fin coupée net pour que la relecture TikTok enchaîne
     },
     "long": {
         "enabled": True,
@@ -69,6 +75,8 @@ DEFAULTS: dict[str, Any] = {
         "pre_roll": 10.0,
         "post_roll": 8.0,
         "merge_gap": 4.0,
+        "bounds": "adaptive",
+        "lead_min": 1.5, "lead_max": 8.0, "tail_max": 6.0,
         "transition": "cut",
         "transition_seconds": 0.4,
     },
@@ -108,6 +116,7 @@ DEFAULTS: dict[str, Any] = {
         # "auto" : .srt à côté de la vidéo source s'il existe, sinon Whisper local
         # (faster-whisper) s'il est installé, sinon aucun sous-titre.
         "mode": "auto",  # "auto" | "sidecar" | "whisper" | "off"
+        "style": "words",  # "words" : animés mot à mot (montage stylé) | "classic" : ASS
         "whisper_model": "small",
         "language": None,
         "font_size": 16,

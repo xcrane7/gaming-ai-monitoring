@@ -67,7 +67,7 @@ def glow(windows: list[tuple[float, float]], width: int, label: str) -> tuple[st
     graph = (f"[{label}]split=2[{label}ga][{label}gb];"
              f"[{label}gb]gblur=sigma={sigma}:enable='{e}',"
              f"eq=brightness=0.06:saturation=1.4:enable='{e}'[{label}gc];"
-             f"[{label}ga][{label}gc]blend=all_mode=screen:all_opacity=0.55:enable='{e}'[{out}]")
+             f"[{label}ga][{label}gc]blend=all_mode=screen:all_opacity=0.38:enable='{e}'[{out}]")
     return graph, out
 
 

@@ -219,8 +219,9 @@ class Orchestrator:
         plans = {fmt: build_plan(fmt, analyses, self.cfg) for fmt in formats}
         if self.cfg["style"]["enabled"]:
             texts = ClaudeDirector(self.cfg, self.guard, self.log).creative_texts(stem, analyses)
-            music_info = self._music_info(stem)
             key = originals[analyses[0]["path"]][:16]
+            target = editing.style_dna(analyses, self.cfg, "short", key + "short")["bpm"]
+            music_info = self._music_info(stem, target)
             for fmt, plan in plans.items():
                 editing.direct(plan, analyses, self.cfg, texts.get(fmt), key + fmt, music_info)
                 self.log(f"{fmt} : style « {plan.style.get('palette_name')} / "
@@ -239,6 +240,13 @@ class Orchestrator:
         intact = all(fingerprint(src) == fp for src, fp in originals.items())
         meta = ClaudeDirector(self.cfg, self.guard, self.log).metadata(
             stem, {o["format"]: o["plan"] for o in outputs})
+        for out in outputs:
+            if out["format"] == "long" and out["qa"]["status"] != FAIL:
+                package = self._youtube_package(out, meta)
+                out["youtube"] = package
+                if package.get("chapters_text"):
+                    meta["description"] = (meta.get("description", "").rstrip()
+                                           + "\n\n" + package["chapters_text"])
         report = {
             "source": [a["path"] for a in analyses], "job_id": job_id,
             "metadata": meta, "originals_intact": intact,
@@ -251,24 +259,97 @@ class Orchestrator:
         report["report_path"] = str(report_path)
         return report
 
-    def _music_info(self, stem: str) -> dict | None:
-        """Musique fournie dans assets/music : tempo et temps détectés pour caler les coupes."""
+    def _youtube_package(self, out: dict, meta: dict) -> dict:
+        """Chapitres (règles YouTube : 0:00 en premier, 10 s minimum entre deux) et miniature."""
+        from .editor.plan import EditPlan
+        from .engines import graphics
+
+        plan = EditPlan.from_dict(out["plan"])
+        offsets = plan.offsets()
+        chapters, last = [], -100.0
+        for i, (seg, off) in enumerate(zip(plan.segments, offsets)):
+            t = 0.0 if i == 0 else off
+            if i and (t - last < 10 or plan.duration - t < 10):
+                continue
+            label = (seg.label if seg.label not in ("", "menu", "source entière", "rien",
+                                                    "repère régulier") else "Action")
+            chapters.append({"t": round(t, 2), "title": "Intro" if i == 0 else
+                             f"Moment {len(chapters)} – {label.capitalize()}"})
+            last = t
+        text = "\n".join(f"{int(c['t'] // 60)}:{int(c['t'] % 60):02d} {c['title']}"
+                         for c in chapters) if len(chapters) >= 3 else ""
+        thumb = None
+        try:
+            best = max(range(len(plan.segments)), key=lambda k: plan.segments[k].score)
+            seg = plan.segments[best]
+            at = offsets[best] + seg.map_time(seg.peak)
+            thumb = Path(out["path"]).with_name(Path(out["path"]).stem + "_thumbnail.jpg")
+            raw = thumb.with_suffix(".frame.png")
+            from .ffutil import run_ffmpeg
+
+            run_ffmpeg(["-ss", f"{max(0.0, at):.2f}", "-i", out["path"], "-frames:v", "1",
+                        "-vf", "scale=1280:720:force_original_aspect_ratio=increase,"
+                        "crop=1280:720,eq=saturation=1.3:contrast=1.08", str(raw)])
+            from PIL import Image
+
+            img = Image.open(raw).convert("RGBA")
+            words = (meta.get("title") or "Meilleurs moments").upper().split()[:3]
+            ctx = graphics.Context(1280, 720, 30, 1, palette=plan.style.get("palette") or
+                                   graphics.Context(1, 1, 1, 1).palette,
+                                   font=plan.style.get("font") or "Impact")
+            sprite = graphics.text_sprite(" ".join(words), ctx.font, 118,
+                                          ctx.color("accent"), 10, (0, 0, 0, 255),
+                                          glow=(0, 0, 0, 200), glow_radius=12, shadow=8)
+            graphics.paste(img, sprite, 640, 600, min(1.0, 1180 / sprite.width), -3)
+            img.convert("RGB").save(thumb, quality=92)
+            raw.unlink(missing_ok=True)
+        except Exception as exc:
+            self.log(f"Miniature impossible : {exc}", "warn")
+            thumb = None
+        return {"chapters": chapters, "chapters_text": text,
+                "thumbnail": str(thumb) if thumb else None}
+
+    def _music_info(self, stem: str, target_bpm: float | None = None) -> dict | None:
+        """Musique fournie dans assets/music : celle dont le tempo colle le mieux à l'énergie
+        de la vidéo ; tempo et temps détectés pour caler les coupes."""
         if not self.cfg["music"]["enabled"]:
             return None
-        from .editor.render import pick_music
+        from .editor.render import AUDIO_EXT, pick_music
         from .engines.audio import detect_beats
 
-        found = pick_music(self.cfg.path("music"), stem)
-        if not found:
+        files = sorted(p for p in self.cfg.path("music").glob("*")
+                       if p.suffix.lower() in AUDIO_EXT)
+        if not files:
             return None
-        try:
-            beats = detect_beats(found)
-        except Exception as exc:
-            self.log(f"Analyse rythmique impossible pour {found.name} : {exc}", "warn")
+        cache = self.db.kv_get("music.beats", {}) or {}
+        analysed = []
+        for f in files:
+            key = f"{f.name}|{f.stat().st_size}|{int(f.stat().st_mtime)}"
+            if key not in cache:
+                try:
+                    cache[key] = detect_beats(f)
+                except Exception as exc:
+                    self.log(f"Analyse rythmique impossible pour {f.name} : {exc}", "warn")
+                    continue
+            if cache[key].get("bpm", 0) > 0:
+                analysed.append((f, cache[key]))
+        self.db.kv_set("music.beats", cache)
+        if not analysed:
             return None
-        if beats["bpm"] <= 0:
-            return None
-        self.log(f"Musique {found.name} : {beats['bpm']} BPM détectés.")
+        if target_bpm:
+            # tempo le plus proche (un morceau à 70 BPM vaut un 140 en double temps)
+            def distance(bpm: float) -> float:
+                return min(abs(bpm - target_bpm), abs(2 * bpm - target_bpm),
+                           abs(bpm / 2 - target_bpm))
+            ranked = sorted(analysed, key=lambda fb: (round(distance(fb[1]["bpm"]) / 6),
+                                                      pick_music(self.cfg.path("music"), stem)
+                                                      != fb[0]))
+            found, beats = ranked[0]
+        else:
+            found = pick_music(self.cfg.path("music"), stem)
+            beats = dict(analysed).get(found) or analysed[0][1]
+            found = found if found in dict(analysed) else analysed[0][0]
+        self.log(f"Musique {found.name} : {beats['bpm']} BPM.")
         return {"path": str(found), **beats}
 
     # -- tâches ------------------------------------------------------------------

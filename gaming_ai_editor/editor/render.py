@@ -226,7 +226,8 @@ class Renderer:
                 work / "music.wav", total, bpm=float(m["bpm"]), drop_at=m.get("drop_at"),
                 calm=tuple(m["calm"]) if m.get("calm") else None,
                 seed=int((plan.style or {}).get("seed", 0)) % 100000,
-                energy=float((plan.style or {}).get("energy", 1.0)))
+                energy=float((plan.style or {}).get("energy", 1.0)),
+                fade_out=0.05 if m.get("loop") else 1.5)
             return Path(res["path"]), {"music": "générée", "bpm": m["bpm"],
                                        "drop_at": m.get("drop_at")}
         if m.get("mode") == "user":
@@ -255,9 +256,10 @@ class Renderer:
                   music: Path | None, sfx_path: Path | None, gfx: Path | None,
                   ass_name: str | None, on_progress=None) -> dict:
         n = len(clips)
-        durations = [s.out_duration for s in plan.segments]
-        t = plan.transition_seconds if plan.transition == "xfade" and n > 1 else 0.0
-        total = sum(durations) - (n - 1) * t
+        laps = plan.overlaps()
+        offsets = plan.offsets()
+        t = max(laps) if laps else 0.0
+        total = plan.duration
         inputs: list[str] = []
         for clip in clips:
             inputs += ["-i", str(clip)]
@@ -265,15 +267,15 @@ class Renderer:
         if n == 1:
             graph.append("[0:v]null[vc];[0:a]anull[ac]")
         elif t > 0:
-            prev_v, prev_a, offset = "[0:v]", "[0:a]", 0.0
+            prev_v, prev_a = "[0:v]", "[0:a]"
             styles = plan.transitions or []
             for k in range(1, n):
-                offset += durations[k - 1] - t
+                d = laps[k - 1]
                 style = styles[k - 1] if k - 1 < len(styles) else \
                     XFADE_STYLES[(k - 1) % len(XFADE_STYLES)]
-                graph.append(f"{prev_v}[{k}:v]xfade=transition={style}:duration={t:.4f}:"
-                             f"offset={offset:.4f}[xv{k}]")
-                graph.append(f"{prev_a}[{k}:a]acrossfade=d={t:.4f}:c1=tri:c2=tri[xa{k}]")
+                graph.append(f"{prev_v}[{k}:v]xfade=transition={style}:duration={d:.4f}:"
+                             f"offset={offsets[k]:.4f}[xv{k}]")
+                graph.append(f"{prev_a}[{k}:a]acrossfade=d={d:.4f}:c1=tri:c2=tri[xa{k}]")
                 prev_v, prev_a = f"[xv{k}]", f"[xa{k}]"
             graph.append(f"{prev_v}null[vc];{prev_a}anull[ac]")
         else:
@@ -281,7 +283,9 @@ class Renderer:
             graph.append(f"{pads}concat=n={n}:v=1:a=1[vc][ac]")
 
         fade_out = max(0.0, total - 0.35)
-        vchain = f"[vc]fade=t=in:d=0.12,fade=t=out:st={fade_out:.3f}:d=0.35"
+        # boucle : ni fondu d'entrée ni fondu au noir, la relecture enchaîne sans coupure
+        vchain = "[vc]null" if plan.loop else \
+            f"[vc]fade=t=in:d=0.12,fade=t=out:st={fade_out:.3f}:d=0.35"
         if ass_name:
             vchain += f",subtitles={ass_name}"
         next_input = n
@@ -327,8 +331,9 @@ class Renderer:
         mixed = "".join(mix_inputs)
         mix = (f"{mixed}amix=inputs={len(mix_inputs)}:normalize=0:duration=first,"
                if len(mix_inputs) > 1 else f"{mixed}")
-        graph.append(f"{mix}loudnorm=I={lufs}:TP=-1.5:LRA=11,aresample=48000,"
-                     f"afade=t=out:st={fade_out:.3f}:d=0.35[aout]")
+        tail = (f"afade=t=out:st={max(0.0, total - 0.04):.3f}:d=0.04" if plan.loop
+                else f"afade=t=out:st={fade_out:.3f}:d=0.35")
+        graph.append(f"{mix}loudnorm=I={lufs}:TP=-1.5:LRA=11,aresample=48000,{tail}[aout]")
 
         def build(family: str) -> list[str]:
             return [*inputs, "-filter_complex", ";".join(graph),
@@ -387,7 +392,14 @@ class Renderer:
         subtitle_origin = "none"
         if cues_by_source:
             cues = subs.remap_cues(plan, cues_by_source)
-            if cues:
+            word_style = is_styled and self.cfg["subtitles"].get("style", "words") == "words"
+            if cues and word_style:  # sous-titres animés mot à mot dans la couche graphique
+                words = subs.words_from_cues(cues)
+                plan.graphics = [g for g in plan.graphics if g["type"] != "captions"] + [
+                    {"type": "captions", "start": words[0]["t0"], "end": words[-1]["t1"],
+                     "words": words}]
+                subtitle_origin = f"{len(cues)} répliques, {len(words)} mots animés"
+            elif cues:
                 ass_name = "subs.ass"
                 subs.write_ass(cues, work / ass_name, plan.width, plan.height,
                                int(self.cfg["subtitles"]["font_size"]),
