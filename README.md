@@ -91,23 +91,33 @@ sont utilisés, s'ils sont installés et connectés : cela ne déclenche aucun a
 `"allow_paid_api": true` dans `config.json` et fourni une clé. Chaque appel (autorisé ou
 refusé) est journalisé et visible dans l'onglet *Système* du dashboard.
 
-### Brancher Gemini (gratuit avec ton compte Google)
+### Brancher Gemini (clé gratuite Google AI Studio)
 
-1. Installe [Node.js](https://nodejs.org) (version LTS).
-2. Dans PowerShell : `npm install -g @google/gemini-cli`
-3. Lance `gemini` une fois, choisis **Login with Google** et connecte-toi. Tape `/quit`.
-4. Vérifie : `.venv\Scripts\python -m gaming_ai_editor inspect` doit afficher `CLI gemini : C:\...`.
-5. Relance `start.bat`. Dans le dashboard, onglet *Système* : « Gemini : CLI d'abonnement détecté ».
+Depuis juin 2026, Google refuse la connexion avec un compte personnel dans Gemini CLI
+(message « This client is no longer supported for Gemini Code Assist for individuals »).
+L'application appelle donc Gemini directement avec une **clé API gratuite** :
 
-Ensuite, pour chaque vidéo, l'application extrait une image par moment fort et demande à
-Gemini de l'étiqueter (kill, headshot, victoire, fail, drôle…). Ces étiquettes déclenchent
-la notification « Élimination », le tampon HEADSHOT et le bandeau VICTOIRE.
+1. Va sur <https://aistudio.google.com>, connecte-toi, clique **Get API key** puis
+   **Create API key**. Copie la clé.
+2. **N'active pas la facturation** (« Set up billing ») sur ce projet : sans facturation,
+   Google refuse les requêtes au-delà du quota gratuit au lieu de les faire payer.
+3. Dans le dossier du projet, crée un fichier texte `gemini_key.txt` et colle la clé
+   dedans, seule sur la ligne. Ce fichier n'est jamais envoyé sur GitHub.
+4. Relance `start.bat`. Onglet *Système* du dashboard : « Gemini : API gratuite (clé détectée) ».
 
-### Faire travailler Gemini sur le code du projet
+Une seule requête par vidéo (les images des moments forts, en une fois), 20 par jour au
+maximum (`ai.gemini.max_requests_per_day`). Si le quota gratuit est épuisé, le montage se
+fait sans Gemini jusqu'au lendemain. Sur l'offre gratuite, Google peut utiliser les images
+envoyées pour améliorer ses produits : ce ne sont que des images de ton gameplay.
 
-Gemini CLI peut aussi modifier le projet, comme Claude Code. Ouvre PowerShell dans le
-dossier du projet et lance `gemini` : il lit automatiquement [`GEMINI.md`](GEMINI.md), qui
-lui explique le projet et ses règles. Ne fais pas travailler Claude Code et Gemini en
+Gemini étiquette chaque moment (kill, headshot, victoire, fail, drôle…). Ces étiquettes
+déclenchent la notification « Élimination », le tampon HEADSHOT et le bandeau VICTOIRE.
+
+### Faire travailler un agent (Antigravity, Gemini, Claude Code) sur le code
+
+Ouvre le dossier du projet dans **Antigravity** (l'outil de Google qui remplace Gemini
+CLI) et commence par : « Lis AGENTS.md, README.md et docs/ENGINES.md ». `AGENTS.md`
+contient le contexte et les règles du projet. Ne fais pas travailler deux agents en
 même temps sur les mêmes fichiers.
 
 ## Skills Researcher
@@ -188,8 +198,8 @@ Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) �
 
 - **NVENC** sur la RTX 5070 Ti (aucun GPU ici ; seul le repli CPU a été testé) ;
 - les scripts `.bat` et le démarrage automatique Windows ;
-- le **CLI Gemini** connecté à un compte (ses options ont été vérifiées sur la version 0.68,
-  mais aucun appel réel n'a pu être fait ici) : sans lui, pas de kill feed
+- un **vrai appel à Gemini** avec une clé AI Studio (le format de la requête et la
+  gestion des erreurs sont testés avec un faux serveur, sans vraie clé) : sans clé, pas de kill feed
   « Élimination », de tampon HEADSHOT ni de bandeau VICTOIRE ;
 - les sous-titres **Whisper** (téléchargement du modèle bloqué ici) ;
 - les polices Windows (Impact, Bahnschrift) : ici le rendu utilise Inter Display Black.

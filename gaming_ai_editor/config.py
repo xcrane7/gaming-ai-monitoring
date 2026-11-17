@@ -115,7 +115,10 @@ DEFAULTS: dict[str, Any] = {
     "ai": {
         # Garde-fou des coûts : rien de payant sans autorisation explicite.
         "allow_paid_api": False,
-        "gemini": {"mode": "auto", "command": "gemini", "model": None, "timeout": 240},
+        # Gemini : clé API gratuite (Google AI Studio, projet SANS facturation), dans la
+        # variable GEMINI_API_KEY ou le fichier gemini_key.txt. Une requête par vidéo.
+        "gemini": {"mode": "auto", "command": "gemini", "model": None, "timeout": 240,
+                   "free_tier_only": True, "max_requests_per_day": 20},
         "claude": {"mode": "auto", "command": "claude", "model": None, "timeout": 240},
         # mode : "auto" (CLI de l'abonnement si présent) | "cli" | "api" | "off"
     },

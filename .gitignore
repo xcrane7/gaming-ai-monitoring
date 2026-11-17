@@ -16,3 +16,5 @@ assets/sfx/*
 !assets/sfx/LISEZMOI.txt
 config.json
 *.partial.mp4
+# clé API personnelle : jamais dans git
+gemini_key.txt

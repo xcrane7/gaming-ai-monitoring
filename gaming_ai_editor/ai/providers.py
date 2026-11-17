@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -37,12 +38,49 @@ class CostGuard:
             allowed = bool(self.cfg["ai"]["allow_paid_api"])
             detail = ("autorisé par ai.allow_paid_api" if allowed
                       else "REFUSÉ : API payante sans autorisation explicite")
+        elif cost_class == "free_tier_api":
+            # clé gratuite d'un projet sans facturation : Google refuse (erreur 429) au-delà
+            # du quota gratuit au lieu de facturer. Plafond quotidien en plus, par prudence.
+            limit = int(self.cfg["ai"]["gemini"].get("max_requests_per_day", 20))
+            used = self._count_today(provider, cost_class)
+            allowed = used < limit
+            detail = (f"clé gratuite, {used + 1}/{limit} aujourd'hui" if allowed
+                      else f"REFUSÉ : plafond quotidien atteint ({limit} requêtes)")
         else:  # local | subscription_cli
             allowed, detail = True, "aucun coût supplémentaire"
         if self.db:
             self.db.insert("ai_calls", at=time.time(), provider=provider, purpose=purpose,
                            allowed=int(allowed), cost_class=cost_class, detail=detail)
         return allowed
+
+
+    def _count_today(self, provider: str, cost_class: str) -> int:
+        if not self.db:
+            return 0
+        start = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+        row = self.db.one("SELECT COUNT(*) AS n FROM ai_calls WHERE provider=? AND cost_class=? "
+                          "AND allowed=1 AND at>=?", (provider, cost_class, start))
+        return int(row["n"]) if row else 0
+
+
+def gemini_api_key(cfg) -> str | None:
+    """Clé Gemini : variable d'environnement GEMINI_API_KEY ou fichier gemini_key.txt du projet."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if key:
+        return key
+    path = Path(cfg.root) / "gemini_key.txt"
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return key or None
+
+
+GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+
+
+class QuotaExhausted(RuntimeError):
+    pass
 
 
 def extract_json(text: str):
@@ -84,17 +122,20 @@ def run_cli(command: str, prompt: str, timeout: int, extra_args: list[str] | Non
 def provider_status(cfg) -> dict:
     """État des accès IA, affiché dans le dashboard."""
     out = {"allow_paid_api": bool(cfg["ai"]["allow_paid_api"])}
-    for name, env_key in (("gemini", "GEMINI_API_KEY"), ("claude", None)):
+    for name in ("gemini", "claude"):
         conf = cfg["ai"][name]
         cli = shutil.which(conf["command"])
         mode = conf["mode"]
+        key = gemini_api_key(cfg) if name == "gemini" else None
         if mode == "off":
             state = "désactivé"
+        elif key and mode in ("auto", "api"):
+            free = conf.get("free_tier_only", True)
+            state = ("API gratuite (clé détectée)" if free else
+                     "API payante autorisée" if cfg["ai"]["allow_paid_api"] else
+                     "API payante bloquée (allow_paid_api = false)")
         elif cli and mode in ("auto", "cli"):
             state = "CLI d'abonnement détecté"
-        elif (env_key and mode in ("auto", "api") and os.environ.get(env_key)
-              and cfg["ai"]["allow_paid_api"]):
-            state = "API autorisée"
         else:
             state = "indisponible — mode local"
         out[name] = {"mode": mode, "cli": cli, "state": state}
@@ -111,13 +152,15 @@ class GeminiAnalyst:
         self.conf = cfg["ai"]["gemini"]
 
     def _route(self) -> str | None:
+        """API (clé) d'abord : depuis juin 2026, Gemini CLI refuse les comptes Google
+        personnels ; un CLI installé mais non connecté ne doit pas masquer la clé."""
         mode = self.conf["mode"]
         if mode == "off":
             return None
+        if mode in ("auto", "api") and gemini_api_key(self.cfg):
+            return "api"
         if mode in ("auto", "cli") and shutil.which(self.conf["command"]):
             return "cli"
-        if mode in ("auto", "api") and os.environ.get("GEMINI_API_KEY"):
-            return "api"
         return None
 
     def available(self) -> bool:
@@ -152,28 +195,48 @@ class GeminiAnalyst:
         return "\n".join(lines)
 
     def _call_api(self, prompt: str, frames: list[tuple[int, Path]]) -> str:
-        model = self.conf.get("model") or "gemini-2.5-flash"
+        """Une seule requête par vidéo : texte + toutes les images clés."""
+        key = gemini_api_key(self.cfg)
         parts: list[dict] = [{"text": prompt}]
         for _, path in frames:
             parts.append({"inline_data": {"mime_type": "image/jpeg",
                                           "data": base64.b64encode(path.read_bytes()).decode()}})
-        req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            data=json.dumps({"contents": [{"parts": parts}]}).encode(),
-            headers={"Content-Type": "application/json",
-                     "x-goog-api-key": os.environ["GEMINI_API_KEY"]})
-        with urllib.request.urlopen(req, timeout=int(self.conf["timeout"])) as resp:
-            data = json.loads(resp.read())
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        body = json.dumps({"contents": [{"parts": parts}],
+                           "generationConfig": {"responseMimeType": "application/json",
+                                                "temperature": 0.2}}).encode()
+        models = ([self.conf["model"]] if self.conf.get("model") else []) + GEMINI_MODELS
+        last_error = None
+        for model in dict.fromkeys(models):
+            req = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                data=body, headers={"Content-Type": "application/json", "x-goog-api-key": key})
+            try:
+                with urllib.request.urlopen(req, timeout=int(self.conf["timeout"])) as resp:
+                    data = json.loads(resp.read())
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429:
+                    raise QuotaExhausted("quota gratuit épuisé pour aujourd'hui")
+                if exc.code in (400, 401, 403):
+                    raise RuntimeError(f"clé refusée par Google (HTTP {exc.code})")
+                last_error = f"{model}: HTTP {exc.code}"  # 404 : modèle retiré, on essaie le suivant
+        raise RuntimeError(f"aucun modèle Gemini disponible ({last_error})")
 
     def enrich(self, analysis: dict, work: Path) -> dict:
         """Ajoute étiquettes et intérêt aux moments forts. Ne lève jamais d'exception."""
         route = self._route()
         if not route or not analysis.get("highlights"):
             return analysis
-        cost_class = "subscription_cli" if route == "cli" else "paid_api"
+        if route == "api":
+            today = time.strftime("%Y-%m-%d")
+            if self.guard.db and self.guard.db.kv_get("gemini.quota_exhausted") == today:
+                self.log("Quota gratuit Gemini épuisé aujourd'hui : analyse locale.")
+                return analysis
+            cost_class = "free_tier_api" if self.conf.get("free_tier_only", True) else "paid_api"
+        else:
+            cost_class = "subscription_cli"
         if not self.guard.authorize("gemini", "qualification des moments forts", cost_class):
-            self.log("Gemini (API) refusé par le garde-fou des coûts : analyse locale conservée.")
+            self.log("Gemini refusé par le garde-fou des coûts : analyse locale conservée.")
             return analysis
         try:
             frames = self._frames(analysis, work)
@@ -208,6 +271,10 @@ class GeminiAnalyst:
             analysis["highlights"].sort(key=lambda h: h["score"], reverse=True)
             analysis["ai"] = {"gemini": route, "moments_qualifiés": applied}
             self.log(f"Gemini ({route}) : {applied} moments qualifiés.")
+        except QuotaExhausted as exc:
+            if self.guard.db:
+                self.guard.db.kv_set("gemini.quota_exhausted", time.strftime("%Y-%m-%d"))
+            self.log(f"Gemini : {exc}. Analyse locale jusqu'à demain.")
         except Exception as exc:  # jamais bloquant
             self.log(f"Gemini indisponible ({type(exc).__name__}: {str(exc)[:120]}) : "
                      "analyse locale conservée.")

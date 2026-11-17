@@ -58,6 +58,12 @@ def _module_version(name: str) -> str | None:
         return None
 
 
+def _gemini_key(cfg) -> bool:
+    from .ai.providers import gemini_api_key
+
+    return bool(gemini_api_key(cfg))
+
+
 def inspect(cfg=None) -> dict:
     gpu = _run(["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
                 "--format=csv,noheader"])
@@ -86,6 +92,7 @@ def inspect(cfg=None) -> dict:
         "modules": {name: _module_version(name)
                     for name in ("numpy", "cv2", "faster_whisper")},
         "cli": {name: shutil.which(name) for name in ("gemini", "claude")},
+        "gemini_api_key": bool(cfg and _gemini_key(cfg)),
         "disk_free_gb": round(shutil.disk_usage(root).free / 1024 ** 3, 1),
     }
     problems = []
@@ -107,8 +114,9 @@ def inspect(cfg=None) -> dict:
     if not report["modules"]["faster_whisper"]:
         notes.append("faster-whisper absent : pas de sous-titres automatiques "
                      "(les .srt fournis restent pris en charge).")
-    if not report["cli"]["gemini"]:
-        notes.append("CLI Gemini absent : analyse 100 % locale.")
+    if not report["gemini_api_key"]:
+        notes.append("Pas de clé Gemini (GEMINI_API_KEY ou gemini_key.txt) : pas de détection "
+                     "des kills, headshots et victoires.")
     if report["disk_free_gb"] < 20:
         notes.append(f"Espace disque faible : {report['disk_free_gb']} Go libres.")
     report["problems"], report["notes"] = problems, notes
@@ -137,6 +145,7 @@ def format_report(report: dict) -> str:
         lines.append(f"Module {name:<14}: {version or 'absent'}")
     for name, path in report["cli"].items():
         lines.append(f"CLI {name:<9}: {path or 'absent'}")
+    lines.append(f"Clé Gemini   : {'détectée' if report.get('gemini_api_key') else 'absente'}")
     lines.append(f"Disque libre : {report['disk_free_gb']} Go")
     for p in report["problems"]:
         lines.append(f"[BLOQUANT] {p}")

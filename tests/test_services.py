@@ -267,7 +267,7 @@ def test_extract_json():
 
 def test_paid_api_is_refused_without_explicit_authorization(cfg, orch, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "cle-de-test")
-    cfg.data["ai"]["gemini"]["mode"] = "api"
+    cfg.data["ai"]["gemini"].update({"mode": "api", "free_tier_only": False})
     called = []
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: called.append(a))
     analyst = GeminiAnalyst(cfg, CostGuard(cfg, orch.db), lambda m: None)
@@ -277,7 +277,83 @@ def test_paid_api_is_refused_without_explicit_authorization(cfg, orch, monkeypat
     assert not called, "aucun appel réseau ne doit partir"
     row = orch.db.one("SELECT * FROM ai_calls")
     assert row["allowed"] == 0 and row["cost_class"] == "paid_api"
-    assert provider_status(cfg)["gemini"]["state"].startswith("indisponible")
+    assert "bloquée" in provider_status(cfg)["gemini"]["state"]
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def read(self):
+        return json.dumps(self.payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_free_gemini_key_labels_moments(cfg, orch, media, monkeypatch, tmp_path):
+    """Clé gratuite : une requête par vidéo, images jointes, étiquettes appliquées."""
+    from gaming_ai_editor.analysis import analyze_video
+
+    cfg.data["ai"]["gemini"]["mode"] = "auto"
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    (cfg.root / "gemini_key.txt").write_text("cle-gratuite\n")
+    analysis = analyze_video(media["square"], cfg["analysis"])
+    first = analysis["highlights"][0]["peak"]
+    sent = []
+    verdicts = [{"index": 0, "label": "headshot", "interest": 9, "comment": "propre"}]
+
+    def fake(req, timeout=0):
+        sent.append(req)
+        body = json.loads(req.data)
+        if "gemini-flash-latest" in req.full_url:  # modèle retiré : on passe au suivant
+            raise urllib.error.HTTPError(req.full_url, 404, "not found", {}, None)
+        return _FakeResponse({"candidates": [{"content": {"parts": [
+            {"text": json.dumps(verdicts)}]}}]})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    logs = []
+    out = GeminiAnalyst(cfg, CostGuard(cfg, orch.db), logs.append).enrich(
+        analysis, tmp_path / "frames")
+    top = out["highlights"][0]
+    assert top["peak"] == first and top["label"] == "headshot" and top["source"] == "gemini"
+    body = json.loads(sent[-1].data)
+    images = [p for p in body["contents"][0]["parts"] if "inline_data" in p]
+    assert len(images) == min(10, len(analysis["highlights"])) and len(sent) == 2
+    assert sent[-1].headers["X-goog-api-key"] == "cle-gratuite"
+    row = orch.db.one("SELECT * FROM ai_calls")
+    assert row["cost_class"] == "free_tier_api" and row["allowed"] == 1
+    assert "cle-gratuite" not in json.dumps(orch.db.query("SELECT * FROM ai_calls"))
+    assert "cle-gratuite" not in " ".join(logs)
+    assert provider_status(cfg)["gemini"]["state"] == "API gratuite (clé détectée)"
+
+
+def test_free_gemini_quota_and_daily_cap(cfg, orch, monkeypatch, tmp_path):
+    monkeypatch.setenv("GEMINI_API_KEY", "cle")
+    cfg.data["ai"]["gemini"].update({"mode": "auto", "max_requests_per_day": 2})
+    analysis = {"path": "x.mp4", "highlights": [
+        {"peak": 1.0, "score": 2.0, "label": "action", "start": 0, "end": 2}]}
+    calls = []
+    analyst = GeminiAnalyst(cfg, CostGuard(cfg, orch.db), lambda m: None)
+    monkeypatch.setattr(analyst, "_frames", lambda a, w: [(0, tmp_path / "f.jpg")])
+    (tmp_path / "f.jpg").write_bytes(b"jpg")
+
+    def quota(req, timeout=0):
+        calls.append(req)
+        raise urllib.error.HTTPError(req.full_url, 429, "quota", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", quota)
+    analyst.enrich(analysis, tmp_path)
+    assert len(calls) == 1, "429 : on n'essaie pas d'autres modèles"
+    analyst.enrich(analysis, tmp_path)
+    assert len(calls) == 1, "quota épuisé : plus aucun appel aujourd'hui"
+    orch.db.kv_set("gemini.quota_exhausted", "hier")
+    guard = CostGuard(cfg, orch.db)
+    assert guard.authorize("gemini", "t", "free_tier_api")  # 2e requête du jour
+    assert not guard.authorize("gemini", "t", "free_tier_api")  # plafond de 2 atteint
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="stubs exécutables POSIX")
