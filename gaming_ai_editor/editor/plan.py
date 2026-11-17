@@ -165,6 +165,21 @@ def build_plan(fmt: str, analyses: list[dict], cfg, title: str = "") -> EditPlan
         longest = max(chosen, key=lambda s: s.duration)
         longest.end -= min(excess, longest.duration - 1.0)
 
+    # Bornes calées sur un changement de plan proche : les clips démarrent proprement.
+    cuts = {a["path"]: a.get("scene_cuts") or [] for a in analyses}
+    for seg in chosen:
+        for cut in cuts.get(seg.source, []):
+            if abs(cut - seg.start) <= 1.0 and cut < seg.peak - 1.0:
+                seg.start = float(cut)
+            elif abs(cut - seg.end) <= 1.0 and cut > seg.peak + 1.0:
+                seg.end = float(cut)
+    while chosen and _total(chosen) - overhead(len(chosen)) > max_s:
+        longest = max(chosen, key=lambda s: s.duration)
+        longest.end -= min(_total(chosen) - overhead(len(chosen)) - max_s,
+                           longest.duration - 1.0)
+        if longest.duration <= 1.0:
+            break
+
     if plan.transition == "xfade" and len(chosen) > MAX_XFADE_CLIPS:
         plan.transition, plan.transition_seconds = "cut", 0.0
         plan.notes.append("Trop de clips pour des fondus : coupes franches utilisées.")

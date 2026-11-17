@@ -241,8 +241,10 @@ class ClaudeDirector:
             '"hashtags": ["#..."]}')
         try:
             extra = ["--model", self.conf["model"]] if self.conf.get("model") else []
+            # dossier de travail neutre : Claude ne charge pas le contexte du projet
             data = extract_json(run_cli(self.conf["command"], prompt,
-                                        int(self.conf["timeout"]), extra))
+                                        int(self.conf["timeout"]), extra,
+                                        cwd=self.cfg.work_dir))
             if isinstance(data, dict) and isinstance(data.get("title"), str) and data["title"]:
                 meta["title"] = data["title"][:100]
                 if isinstance(data.get("description"), str):

@@ -13,10 +13,10 @@ from ..ffutil import (BUILTIN_ENCODE_PROFILE, FFmpegError, encoder_works, probe,
 
 def reference_clip(data_dir: Path, seconds: int = 12) -> Path:
     """Clip de référence 1080p (généré une fois, réutilisé ensuite)."""
-    ref = Path(data_dir) / "benchmark" / f"reference_{seconds}s.mp4"
+    ref = Path(data_dir) / "benchmark" / f"reference_v2_{seconds}s.mp4"
     if not ref.exists():
         synth.make_gameplay(ref, duration=seconds, width=1920, height=1080, fps=60,
-                            bursts=[(3, 5), (8, 10)], cut_every=4)
+                            bursts=[(3, 5), (8, 10)], cut_every=4, noise=12)
     return ref
 
 
@@ -53,23 +53,20 @@ def run_benchmark(cfg, log: Callable[[str], None] = print) -> dict:
     """Compare les encodeurs réellement utilisables sur cette machine."""
     ref = reference_clip(cfg.data_dir)
     work = cfg.data_dir / "benchmark"
+    cap = ["-maxrate", "16M", "-bufsize", "32M", "-pix_fmt", "yuv420p"]  # même plafond pour tous
     candidates: dict[str, list[str]] = {
         "x264 veryfast crf20 (défaut CPU)": BUILTIN_ENCODE_PROFILE["cpu"]["final"],
-        "x264 faster crf20": ["-c:v", "libx264", "-preset", "faster", "-crf", "20",
-                              "-pix_fmt", "yuv420p"],
-        "x264 ultrafast crf18": ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
-                                 "-pix_fmt", "yuv420p"],
+        "x264 faster crf20": ["-c:v", "libx264", "-preset", "faster", "-crf", "20", *cap],
+        "x264 superfast crf20": ["-c:v", "libx264", "-preset", "superfast", "-crf", "20", *cap],
     }
     nvenc = encoder_works("h264_nvenc")
     if nvenc:
         candidates["nvenc p5 cq21 (défaut GPU)"] = BUILTIN_ENCODE_PROFILE["nvenc"]["final"]
         candidates["nvenc p7 cq21"] = ["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq",
-                                       "-rc", "vbr", "-cq", "21", "-b:v", "0",
-                                       "-pix_fmt", "yuv420p"]
+                                       "-rc", "vbr", "-cq", "21", "-b:v", "0", *cap]
         if encoder_works("hevc_nvenc"):
             candidates["hevc_nvenc p5 cq24"] = ["-c:v", "hevc_nvenc", "-preset", "p5",
-                                                "-rc", "vbr", "-cq", "24", "-b:v", "0",
-                                                "-pix_fmt", "yuv420p"]
+                                                "-rc", "vbr", "-cq", "24", "-b:v", "0", *cap]
     results = {}
     for name, args in candidates.items():
         try:

@@ -237,11 +237,11 @@ class SkillsResearcher:
                     ref.unlink(missing_ok=True)
             if ref.exists():
                 return ref
-        ref = bench / f"ref_synth_{w}x{h}_{fps}_{seconds}s.mp4"
+        ref = bench / f"ref_synth_v2_{w}x{h}_{fps}_{seconds}s.mp4"
         if not ref.exists():
             synth.make_gameplay(ref, duration=seconds, width=w, height=h, fps=fps,
                                 bursts=[(seconds * 0.3, seconds * 0.45)],
-                                cut_every=max(2.0, seconds / 3), audio=False)
+                                cut_every=max(2.0, seconds / 3), audio=False, noise=12)
         return ref
 
     def _measure(self, ref: Path, args: list[str]) -> dict:

@@ -1,0 +1,324 @@
+"""Surveillance INPUT, Skills Researcher, garde-fou IA, dashboard."""
+import json
+import os
+import stat
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+from conftest import copy_in
+from gaming_ai_editor.ai.providers import (ClaudeDirector, CostGuard, GeminiAnalyst,
+                                           extract_json, provider_status)
+from gaming_ai_editor.config import Config
+from gaming_ai_editor.dashboard.server import make_server
+from gaming_ai_editor.research.registry import SkillRegistry
+from gaming_ai_editor.research.researcher import (ResearchScheduler, SkillsResearcher, f1_score,
+                                                  license_allowed, normalize_license)
+from gaming_ai_editor.research.sandbox import SandboxError, clean_env, run_runner
+from gaming_ai_editor.watcher import InputWatcher, Service
+
+
+# -- surveillance du dossier INPUT ---------------------------------------------------
+def test_watcher_waits_for_stable_files(cfg, orch, media):
+    watcher = InputWatcher(orch)
+    target = cfg.input_dir / "capture.mp4"
+    data = Path(media["silent"]).read_bytes()
+    target.write_bytes(data[: len(data) // 2])  # enregistrement en cours
+    assert watcher.scan(now=1000) == []
+    assert watcher.scan(now=1005) == []
+    target.write_bytes(data)  # le fichier grossit : le délai repart de zéro
+    os.utime(target, (2000, 2000))
+    assert watcher.scan(now=1012) == []
+    assert watcher.scan(now=1018) == []
+    created = watcher.scan(now=1023)
+    assert len(created) == 1
+    assert watcher.scan(now=1100) == [], "pas de doublon"
+    (cfg.input_dir / "notes.txt").write_text("ignoré")
+    assert watcher.scan(now=1200) == [] and watcher.scan(now=1300) == []
+    assert InputWatcher(orch).scan(now=5000) == []
+    assert InputWatcher(orch).scan(now=5000) == []
+
+
+def test_service_processes_dropped_file_and_recovers_interrupted_jobs(cfg, orch, media):
+    cfg.data["watcher"]["stable_seconds"] = 1
+    cfg.data["long"]["enabled"] = False
+    vid = orch.register_video(copy_in(cfg, media["square"], "ancien.mp4"))
+    stuck = orch.enqueue(vid)
+    orch.db.update("jobs", stuck, status="running")  # simulation d'une coupure de courant
+    service = Service(orch)
+    service.start()
+    try:
+        copy_in(cfg, media["silent"], "nouveau.mp4")
+        deadline = time.time() + 240
+        while time.time() < deadline:
+            done = orch.db.one("SELECT COUNT(*) AS n FROM jobs WHERE status='done'")["n"]
+            if done == 2:
+                break
+            time.sleep(0.5)
+    finally:
+        service.stop()
+    assert orch.db.one("SELECT status FROM jobs WHERE id=?", (stuck,))["status"] == "done"
+    names = sorted(p.name for p in (cfg.output_dir / "shorts").iterdir())
+    assert names == ["ancien_short.mp4", "nouveau_short.mp4"]
+
+
+# -- registre de skills ---------------------------------------------------------------
+def test_registry_promote_and_rollback(orch):
+    reg = SkillRegistry(orch.db)
+    assert reg.active("encode_profile")["name"] == "builtin"
+    a = reg.add_candidate("encode_profile", "essai-a", "1", {"cpu": {}})
+    b = reg.add_candidate("encode_profile", "essai-b", "1", {"cpu": {}})
+    reg.promote(a, "test")
+    reg.promote(b, "test")
+    assert reg.active("encode_profile")["name"] == "essai-b"
+    assert reg.rollback("encode_profile")["name"] == "essai-a"
+    assert reg.rollback("encode_profile")["name"] == "builtin"
+    assert reg.rollback("encode_profile") is None
+    assert reg.get(a)["status"] == "rolled_back" and reg.get(b)["status"] == "rolled_back"
+    assert [h["action"] for h in reg.history()][:2] == ["rollback", "rollback"]
+
+
+def test_license_gate():
+    allow = Config().data["research"]["license_allowlist"]
+    assert license_allowed("MIT", allow) and license_allowed("BSD-3-Clause", allow)
+    assert license_allowed("Apache-2.0", allow) and license_allowed("LGPL-3.0", allow)
+    for refused in ("AGPL-3.0", "GPL-3.0", "inconnue", "", "NOASSERTION", "Proprietary"):
+        assert not license_allowed(refused, allow), refused
+    assert normalize_license({"license_expression": "BSD-3-Clause"}) == "BSD-3-Clause"
+    assert normalize_license({"classifiers": [
+        "License :: OSI Approved :: GNU Affero General Public License v3"]}) == "AGPL-3.0"
+    assert normalize_license({}) == "inconnue"
+    assert f1_score([5.0, 10.2, 31.0], [5.0, 10.0, 15.0]) == pytest.approx(0.6667, abs=1e-3)
+
+
+def test_encode_judgement_rules(cfg, orch):
+    r = SkillsResearcher(cfg, orch.db, orch.activity)
+    base = {"fps": 100, "bitrate_kbps": 8000, "ssim": 0.970}
+    assert r.judge_encode(base, {"fps": 130, "bitrate_kbps": 8100, "ssim": 0.9695})[0]
+    assert not r.judge_encode(base, {"fps": 200, "bitrate_kbps": 8000, "ssim": 0.960})[0]
+    assert not r.judge_encode(base, {"fps": 200, "bitrate_kbps": 12000, "ssim": 0.980})[0]
+    assert not r.judge_encode(base, {"fps": 104, "bitrate_kbps": 8000, "ssim": 0.970})[0]
+    assert r.judge_encode(base, {"fps": 98, "bitrate_kbps": 8000, "ssim": 0.975})[0]
+    assert not r.judge_encode(base, {"fps": 300, "bitrate_kbps": 100, "ssim": None})[0]
+
+
+# -- chercheur : pause, cycle, planification --------------------------------------------
+def test_researcher_pauses_while_rendering(cfg, orch):
+    r = SkillsResearcher(cfg, orch.db, orch.activity)
+    orch.activity.begin()
+    threading.Timer(2.5, orch.activity.end).start()
+    started = time.time()
+    assert r._guarded(lambda: "mesure") == "mesure"
+    assert time.time() - started >= 2.0 and r.pauses == 1
+
+
+def test_research_cycle_offline_promotes_only_verified_winners(cfg, orch):
+    r = SkillsResearcher(cfg, orch.db, orch.activity)
+    summary = r.run_cycle(offline=True)
+    assert summary["status"] == "done", summary
+    tested = summary["encode_profile"]["tested"]
+    assert len(tested) == 2 and all("verdict" in t for t in tested)
+    active = r.registry.active("encode_profile")
+    promoted = summary["encode_profile"]["promoted"]
+    if promoted:
+        assert active["name"] == promoted
+        assert r.registry.rollback("encode_profile")["name"] == "builtin"
+    else:
+        assert active["name"] == "builtin"
+    rejected = orch.db.query("SELECT metrics FROM skills WHERE status='rejected'")
+    assert all(json.loads(row["metrics"]).get("verdict") for row in rejected)
+    assert orch.db.one("SELECT status FROM research_runs")["status"] == "done"
+    # un second cycle ne reteste pas ce qui a déjà été évalué
+    again = r.run_cycle(offline=True)
+    names = {t["name"] for t in tested} & {t["name"] for t in again["encode_profile"]["tested"]}
+    assert not names
+
+
+def test_reference_clip_comes_from_real_gameplay_when_available(cfg, orch, media):
+    from gaming_ai_editor.ffutil import probe
+
+    r = SkillsResearcher(cfg, orch.db, orch.activity)
+    assert r._reference().name.startswith("ref_synth")
+    vid = orch.register_video(copy_in(cfg, media["square"]))
+    orch.analyze(orch.db.one("SELECT * FROM videos WHERE id=?", (vid,)))
+    ref = r._reference()
+    info = probe(ref)
+    assert ref.name.startswith("ref_real") and (info.width, info.height) == (480, 270)
+    assert abs(info.duration - 3) < 0.3
+
+
+def test_scheduler_survives_shutdown(cfg, orch):
+    sched = ResearchScheduler(cfg, orch.db, orch.activity)
+    now = 1_000_000.0
+    assert sched.due_at(now) == now + 120  # premier démarrage
+    orch.db.kv_set(sched.KEY, now + 3 * 3600)
+    assert sched.due_at(now) == now + 3 * 3600  # échéance future conservée
+    assert sched.due_at(now + 9 * 3600) == now + 9 * 3600 + 120  # PC éteint : rattrapage
+    orch.db.insert("research_runs", started_at=now, status="running")  # cycle coupé net
+    assert sched.due_at(now + 60) == now + 60 + 120
+    assert orch.db.one("SELECT status FROM research_runs")["status"] == "interrupted"
+    assert sched.interval == 6 * 3600
+
+
+def test_scheduler_runs_a_cycle_when_triggered(cfg, orch):
+    cfg.data["research"]["allow_network"] = False
+    cfg.data["research"]["candidates_per_cycle"] = 1
+    sched = ResearchScheduler(cfg, orch.db, orch.activity)
+    sched.start()
+    try:
+        sched.trigger()
+        deadline = time.time() + 240
+        while time.time() < deadline:
+            row = orch.db.one("SELECT status FROM research_runs ORDER BY id DESC LIMIT 1")
+            if row and row["status"] != "running":
+                break
+            time.sleep(0.5)
+    finally:
+        sched.stop()
+    assert row and row["status"] == "done"
+    assert orch.db.kv_get(sched.KEY) > time.time() + 5 * 3600
+
+
+def test_sandbox_isolation(tmp_path):
+    os.environ["GAE_FAKE_API_KEY"] = "secret"
+    try:
+        env = clean_env()
+    finally:
+        del os.environ["GAE_FAKE_API_KEY"]
+    assert "GAE_FAKE_API_KEY" not in env and "PATH" in env
+    with pytest.raises(SandboxError):
+        run_runner(sys.executable, "../../pipeline.py", {})
+    with pytest.raises(SandboxError):
+        run_runner(tmp_path / "pas-de-python", "scene_pyscenedetect.py", {})
+
+
+@pytest.mark.skipif(os.environ.get("GAE_TEST_NETWORK") != "1",
+                    reason="test réseau : GAE_TEST_NETWORK=1 pour l'activer")
+def test_full_online_cycle_installs_tool_in_sandbox(cfg, orch):
+    r = SkillsResearcher(cfg, orch.db, orch.activity)
+    summary = r.run_cycle()
+    assert summary["status"] == "done", summary
+    assert summary["discovery"]["found"] > 5
+    refused = orch.db.one("SELECT * FROM discoveries WHERE name='ultralytics'")
+    assert refused and not refused["license_ok"]
+    tested = summary["scene_detector"]["tested"]
+    assert tested and tested[0]["name"] == "scenedetect" and "précision F1" in tested[0]["verdict"]
+
+
+# -- IA : garde-fou des coûts et CLI d'abonnement ----------------------------------------
+def _stub(tmp_path: Path, name: str, reply: str) -> str:
+    script = tmp_path / name
+    script.write_text(f"#!{sys.executable}\nimport sys\nsys.stdout.write({reply!r})\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+def test_extract_json():
+    assert extract_json('Voici :\n```json\n[{"index": 0}]\n```') == [{"index": 0}]
+    assert extract_json('ok {"title": "A"} fin') == {"title": "A"}
+    with pytest.raises(ValueError):
+        extract_json("aucun json ici")
+
+
+def test_paid_api_is_refused_without_explicit_authorization(cfg, orch, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "cle-de-test")
+    cfg.data["ai"]["gemini"]["mode"] = "api"
+    called = []
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: called.append(a))
+    analyst = GeminiAnalyst(cfg, CostGuard(cfg, orch.db), lambda m: None)
+    analysis = {"path": "x.mp4", "highlights": [
+        {"peak": 1.0, "score": 2.0, "label": "action", "start": 0, "end": 2}]}
+    assert analyst.enrich(analysis, cfg.work_dir / "g") is analysis
+    assert not called, "aucun appel réseau ne doit partir"
+    row = orch.db.one("SELECT * FROM ai_calls")
+    assert row["allowed"] == 0 and row["cost_class"] == "paid_api"
+    assert provider_status(cfg)["gemini"]["state"].startswith("indisponible")
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="stubs exécutables POSIX")
+def test_subscription_cli_enriches_and_bad_answers_fall_back(cfg, orch, media, tmp_path):
+    from gaming_ai_editor.analysis import analyze_video
+
+    analysis = analyze_video(media["square"], cfg["analysis"])
+    first = analysis["highlights"][0]["peak"]
+    reply = json.dumps([{"index": 0, "label": "kill", "interest": 9, "comment": "beau tir"},
+                        {"index": 1, "label": "rien", "interest": 0},
+                        {"index": 99, "label": "kill", "interest": 9},
+                        {"index": 2, "label": "inventé", "interest": 55}])
+    cfg.data["ai"]["gemini"] = {"mode": "cli", "command": _stub(tmp_path, "gemini", reply),
+                                "model": None, "timeout": 30}
+    guard = CostGuard(cfg, orch.db)
+    out = GeminiAnalyst(cfg, guard, lambda m: None).enrich(analysis, tmp_path / "frames")
+    top = out["highlights"][0]
+    assert top["peak"] == first and top["label"] == "kill" and top["source"] == "gemini"
+    # l'index 99 est ignoré ; l'étiquette inventée est refusée mais le moment reste compté
+    assert out["ai"]["moments_qualifiés"] == min(3, len(analysis["highlights"]))
+    assert all(h["label"] != "inventé" for h in out["highlights"])
+    assert orch.db.one("SELECT cost_class FROM ai_calls")["cost_class"] == "subscription_cli"
+
+    cfg.data["ai"]["gemini"]["command"] = _stub(tmp_path, "gemini2", "désolé, pas de JSON")
+    before = json.dumps(analysis["highlights"])
+    GeminiAnalyst(cfg, guard, lambda m: None).enrich(analysis, tmp_path / "frames2")
+    assert json.dumps(analysis["highlights"]) == before, "réponse invalide = analyse inchangée"
+
+    plans = {"short": {"segments": [{"label": "kill", "peak": 12.0, "score": 3.0}]}}
+    cfg.data["ai"]["claude"] = {"mode": "cli", "timeout": 30, "model": None, "command": _stub(
+        tmp_path, "claude", '{"title": "Clutch 1v3", "description": "d", "hashtags": ["#fps"]}')}
+    meta = ClaudeDirector(cfg, guard, lambda m: None).metadata("match", plans)
+    assert meta == {"title": "Clutch 1v3", "description": "d", "hashtags": ["#fps"],
+                    "source": "claude"}
+    cfg.data["ai"]["claude"]["command"] = _stub(tmp_path, "claude2", "erreur")
+    assert ClaudeDirector(cfg, guard, lambda m: None).metadata("match", plans)["source"] == "local"
+
+
+# -- dashboard --------------------------------------------------------------------------
+def test_dashboard_api(cfg, orch, media):
+    cfg.data["long"]["enabled"] = False
+    orch.process_file(copy_in(cfg, media["square"]))
+    reg = SkillRegistry(orch.db)
+    reg.promote(reg.add_candidate("encode_profile", "essai", "1",
+                                  reg.active("encode_profile")["params"]), "test")
+    server = make_server(orch, None, "127.0.0.1", 0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+
+    def call(path, method="GET", headers=None, body=None):
+        req = urllib.request.Request(base + path, method=method, headers=headers or {},
+                                     data=json.dumps(body).encode() if body is not None else None)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return resp.status, resp.headers, resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers, exc.read()
+
+    try:
+        status, _, body = call("/")
+        assert status == 200 and b"GAMING" in body
+        status, _, body = call("/api/state")
+        state = json.loads(body)
+        assert status == 200 and len(state["renders"]) == 1 and state["videos"][0]["highlights"]
+        assert state["ai"]["allow_paid_api"] is False
+        render_id = state["renders"][0]["id"]
+        status, headers, body = call(f"/media/{render_id}", headers={"Range": "bytes=0-99"})
+        assert status == 206 and len(body) == 100 and headers["Content-Range"].startswith(
+            "bytes 0-99/")
+        assert call("/media/9999")[0] == 404
+        assert call("/media/../../etc/passwd")[0] == 404
+        status, _, body = call(f"/api/video/{state['videos'][0]['id']}/timeline")
+        assert status == 200 and json.loads(body)["highlights"]
+        status, _, _ = call("/api/skills/rollback", "POST", {"Origin": "http://evil.example"},
+                            {"kind": "encode_profile"})
+        assert status == 403 and reg.active("encode_profile")["name"] == "essai"
+        status, _, body = call("/api/skills/rollback", "POST", {"Origin": base},
+                               {"kind": "encode_profile"})
+        assert status == 200 and json.loads(body)["ok"]
+        assert reg.active("encode_profile")["name"] == "builtin"
+    finally:
+        server.shutdown()
+        server.server_close()

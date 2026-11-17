@@ -1,0 +1,14 @@
+{
+  "_aide": "Copie ce fichier en config.json et ne garde que ce que tu veux changer. Tout le reste prend la valeur par defaut (voir gaming_ai_editor/config.py).",
+  "short": { "target_seconds": 45, "layout": "hybrid" },
+  "long": { "target_seconds": 480, "width": 1920, "height": 1080 },
+  "render": { "encoder": "auto", "max_fps": 60 },
+  "music": { "enabled": true, "volume_db": -20 },
+  "subtitles": { "mode": "auto", "whisper_model": "small", "language": "fr" },
+  "ai": {
+    "allow_paid_api": false,
+    "gemini": { "mode": "auto" },
+    "claude": { "mode": "auto" }
+  },
+  "research": { "enabled": true, "interval_hours": 6, "auto_integrate": true }
+}

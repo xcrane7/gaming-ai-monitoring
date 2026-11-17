@@ -33,7 +33,8 @@ def default_bursts(duration: float, every: float = 25.0, length: float = 4.0,
 def make_gameplay(path: str | Path, duration: float = 90.0, width: int = 1280,
                   height: int = 720, fps: int = 30,
                   bursts: list[tuple[float, float]] | None = None,
-                  cut_every: float | None = 15.0, audio: bool = True) -> dict:
+                  cut_every: float | None = 15.0, audio: bool = True,
+                  noise: int = 70) -> dict:
     """Crée une vidéo de test. Retourne la vérité terrain {bursts, cuts}."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,7 +49,7 @@ def make_gameplay(path: str | Path, duration: float = 90.0, width: int = 1280,
     labels = "".join(f"[s{i}]" for i in range(count))
     enable = "+".join(f"between(t,{a},{b})" for a, b in bursts) or "0"
     graph = ";".join(parts) + f";{labels}concat=n={count}:v=1:a=0[cat];"
-    graph += f"[cat]noise=alls=70:allf=t:enable='{enable}'[v]"
+    graph += f"[cat]noise=alls={noise}:allf=t:enable='{enable}'[v]"
     args = ["-f", "lavfi", "-i", f"sine=f=180:r=48000:d={duration}",
             "-f", "lavfi", "-i", f"anoisesrc=r=48000:c=pink:a=0.9:d={duration}"]
     if audio:

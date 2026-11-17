@@ -188,6 +188,9 @@ class Orchestrator:
         cues: dict = {}
         for a in analyses:
             found, origin = subs.cues_for_source(a["path"], self.cfg["subtitles"])
+            if origin == "whisper-error":
+                self.log("Whisper n'a pas pu transcrire (modèle absent ou erreur) : "
+                         "pas de sous-titres automatiques pour cette vidéo.", "warn")
             if found:
                 cues[a["path"]] = found
                 self.log(f"Sous-titres ({origin}) : {len(found)} répliques pour "
