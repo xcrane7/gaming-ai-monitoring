@@ -33,37 +33,57 @@ Musique : dépose tes fichiers dans `assets\music\` (dossier vide = pas de musiq
 
 1. **Détection** — un fichier n'est pris que lorsque sa taille est stable (un enregistrement
    OBS en cours n'est pas traité à moitié).
-2. **Analyse** — énergie sonore (tirs, explosions, cris), mouvement à l'image, changements de
-   plan. Les signaux sont fusionnés en une courbe d'intensité dont les pics sont les moments forts.
-3. **Sélection** — les meilleurs passages sont choisis pour atteindre la durée cible du format.
-   Short : le moment le plus fort en accroche. YouTube : ordre chronologique.
-4. **Montage** — recadrage vertical (zone nette centrée sur fond flouté), fondus, effets
-   sonores sur les transitions, musique baissée automatiquement sous le son du jeu,
-   sous-titres incrustés s'il y en a, volume normalisé à −14 LUFS.
-5. **Contrôle qualité** — 13 vérifications par rendu (résolution, durée, synchro audio/vidéo,
-   images noires, erreurs de décodage, volume, originaux intacts…). Un rendu refusé n'arrive
-   jamais dans `OUTPUT/` : il est retenté en mode prudent, puis mis de côté dans `data/rejected/`.
+2. **Compréhension** — explosions, tirs, impacts, rafales, flashs et rushs situés à 20 ms
+   près ; menus et écrans de pause écartés ; suivi de la position de l'action ; couleurs.
+3. **Sélection** — les meilleurs passages pour la durée du format. Short : le moment le
+   plus fort en accroche. YouTube : ordre chronologique.
+4. **Réalisation** — une identité visuelle propre à chaque vidéo, puis pour chaque
+   événement l'effet adapté : punch zoom, tremblement, flash, RGB split, glitch, glow,
+   distorsion, explosion dessinée, étincelles, texte cinétique, notification façon kill
+   feed, compteur de combo ; speed ramp sur le moment le plus fort.
+5. **Son** — musique générée (ou la tienne, avec son tempo détecté), coupes sur les temps,
+   montée puis drop après le ralenti, son du jeu ralenti et grave pendant le speed ramp,
+   effets sonores (impacts, booms, whooshs, riser) calés sur les animations.
+6. **Rendu multicouche** — gameplay animé et étalonné, transitions, couche graphique,
+   sous-titres, mixage normalisé à −14 LUFS.
+7. **Contrôle qualité** — vérifications techniques + synchro des impacts, scintillement,
+   fluidité, présence des animations, densité d'effets. Un rendu refusé est refait en mode
+   prudent ; s'il échoue encore, il n'arrive jamais dans `OUTPUT/`.
+
+L'architecture détaillée (dix moteurs, choix des effets, statuts des skills, limites) est
+dans [`docs/ENGINES.md`](docs/ENGINES.md).
 
 Si la source est plus courte que 5 minutes, la version YouTube contient la vidéo entière et
 la QA le signale par un avertissement. Pour faire une vraie vidéo longue à partir de
 plusieurs clips courts : `python -m gaming_ai_editor compile 1 2 3 --name soiree`.
 
-## Les agents
+## Les moteurs
 
-| Agent | Rôle | Code |
+| # | Moteur | Code |
 |---|---|---|
-| Orchestrateur | Enchaîne les étapes, file d'attente, mémoire, reprise après arrêt | `pipeline.py`, `watcher.py` |
-| Analyste | Signaux audio/vidéo → moments forts ; Gemini en option pour les qualifier | `analysis/`, `ai/providers.py` |
-| Video Editor | Plan de montage puis rendu FFmpeg (NVENC, repli CPU automatique) | `editor/` |
-| Skills Researcher | Amélioration continue toutes les 6 h | `research/` |
-| QA & Benchmark | Contrôle des rendus, mesures de performance | `qa/` |
+| 1 | Gameplay Intelligence | `engines/intelligence.py`, `analysis/` |
+| 2 | Intelligent Editing | `engines/editing.py`, `editor/plan.py` |
+| 3 | Dynamic Motion Design | `engines/motion.py` |
+| 4 | Gaming VFX | `engines/vfx.py` |
+| 5 | Cinematic Color | `engines/color.py` |
+| 6 | Audio Intelligence | `engines/audio.py` |
+| 7 | Motion Graphics & HUD | `engines/graphics.py` |
+| 8 | Automatic Rendering | `editor/render.py` |
+| 9 | Quality Assurance | `qa/` |
+| 10 | Skills Research | `research/` |
+
+L'orchestrateur (`pipeline.py`, `watcher.py`) enchaîne les étapes, gère la file (un seul
+rendu lourd à la fois, attente si la mémoire manque) et reprend les tâches après un arrêt.
 
 ## IA et coûts
 
 Le système fonctionne entièrement **sans IA**. L'IA n'apporte qu'un plus :
 
 - **Gemini** qualifie les moments forts (kill, victoire, fail, drôle) à partir d'images clés ;
-- **Claude** propose titre, description et hashtags.
+- **Claude** écrit l'accroche, les mots d'impact, le titre, la description et les hashtags.
+
+Sans Gemini, les notifications disent « Explosion » ou « Impact », jamais « Kill » : ce
+sont les seules étiquettes que le son et l'image permettent d'affirmer.
 
 Par défaut, seuls les programmes en ligne de commande de tes abonnements (`gemini`, `claude`)
 sont utilisés, s'ils sont installés et connectés : cela ne déclenche aucun achat.
@@ -109,7 +129,8 @@ python -m gaming_ai_editor research run       Lance un cycle de recherche mainte
 
 ## Configuration
 
-Copie `config.example.json` en `config.json` et ne garde que ce que tu changes. Toutes les
+Copie `config.example.json` en `config.json` et ne garde que ce que tu changes. Pour une
+identité de chaîne : `"style": {"channel_name": "TonPseudo", "accent_color": "#FF2E88"}`. Toutes les
 options et leurs valeurs par défaut sont dans `gaming_ai_editor/config.py` (durées cibles,
 cadrage vertical `crop` / `blur` / `hybrid`, encodeur, musique, sous-titres, chercheur…).
 
@@ -117,7 +138,7 @@ cadrage vertical `crop` / `blur` / `hybrid`, encodeur, musique, sous-titres, che
 
 ```
 pip install pytest
-python -m pytest tests                      36 tests, environ 4 minutes
+python -m pytest tests                      57 tests, environ 13 minutes
 GAE_TEST_NETWORK=1 python -m pytest tests   ajoute le cycle de recherche en ligne
 ```
 
@@ -126,28 +147,29 @@ d'action et les changements de plan, ce qui permet de vérifier objectivement la
 
 ## État des vérifications
 
-Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) :
+Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 57 tests :
 
-- détection des moments forts et des changements de plan sur vérité terrain ;
-- Short 30–60 s et vidéo longue 5–12 min réelles, les trois cadrages verticaux ;
-- musique, effets sonores, sous-titres `.srt` recalés sur le montage et incrustés ;
-- sources sans son, carrées, noms de fichiers avec espaces ;
-- QA : refus des rendus défectueux (résolution, écran noir, fichier tronqué) ;
-- originaux intacts (somme de contrôle avant/après) ;
-- repli CPU quand NVENC échoue ;
-- surveillance d'INPUT, reprise des tâches interrompues, compilation multi-vidéos ;
-- Skills Researcher : cycle complet en ligne, bac à sable, promotion, rejet, rollback, pause
-  pendant un rendu, planification persistante ;
-- garde-fou des coûts : API payante refusée sans autorisation ;
-- appel réel au CLI Claude (titre et description) ;
-- dashboard : API, lecture vidéo, protection contre les requêtes d'un autre site.
+- montage complet d'un vrai gameplay FPS 4K : Short 1080×1920 de 43,5 s, 20 contrôles QA
+  réussis, impacts sonores à 1 ms de l'instant prévu, originaux intacts ;
+- détection des événements (tirs, explosions, rafales) et des menus sur vérité terrain ;
+- speed ramp : durée rendue = durée calculée ; courbes d'easing ; expressions de caméra sûres ;
+- tempo d'une musique retrouvé exactement, temps à moins de 40 ms, drop sur une mesure ;
+- effets sonores placés à 20 ms près ; 5 looks d'étalonnage distincts ;
+- les 16 éléments graphiques se dessinent et s'encodent avec transparence ;
+- effets adaptés aux événements, jamais deux effets lourds à moins de 1,5 s, coupes sur le
+  tempo, deux vidéos différentes = deux identités différentes ;
+- sans Gemini, jamais de « kill » ni de « headshot » inventé ;
+- registre : statuts, refus d'activer une version moins bonne, quarantaine et retour arrière ;
+- chercheur : réglages du motion design et décodage GPU mesurés, cycle limité dans le temps,
+  cycle en ligne complet (découverte, bac à sable, licences) ;
+- toutes les vérifications de la version précédente (formats, QA, surveillance, dashboard,
+  garde-fou des coûts, repli CPU).
 
 **Pas encore vérifié — à contrôler sur ton PC :**
 
-- l'encodage **NVENC** réel sur la RTX 5070 Ti (aucun GPU dans l'environnement de
-  développement ; seul le repli CPU a été testé). `scripts\install.bat` te dira s'il fonctionne ;
-- les scripts `.bat` et le démarrage automatique Windows (écrits mais jamais exécutés sur Windows) ;
-- le **CLI Gemini** réel (testé uniquement avec un programme factice qui imite ses réponses) ;
-- les sous-titres automatiques **Whisper** (le téléchargement du modèle était bloqué ici) ;
-- la pertinence de la détection sur de vrais gameplays : elle repose sur le son et le
-  mouvement, elle ne « comprend » pas un kill ou une victoire sans Gemini.
+- **NVENC** sur la RTX 5070 Ti (aucun GPU ici ; seul le repli CPU a été testé) ;
+- les scripts `.bat` et le démarrage automatique Windows ;
+- le **CLI Gemini** réel (testé avec un programme factice) : sans lui, pas de kill feed
+  « Élimination », de tampon HEADSHOT ni de bandeau VICTOIRE ;
+- les sous-titres **Whisper** (téléchargement du modèle bloqué ici) ;
+- les polices Windows (Impact, Bahnschrift) : ici le rendu utilise Inter Display Black.

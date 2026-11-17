@@ -51,7 +51,7 @@ DEFAULTS: dict[str, Any] = {
         "clip_max": 14.0,
         "pre_roll": 4.0,
         "post_roll": 3.0,
-        "layout": "hybrid",  # "crop" | "blur" | "hybrid"
+        "layout": "auto",  # "auto" | "track" | "crop" | "blur" | "hybrid"
         "fg_aspect": 0.8,  # largeur/hauteur de la zone nette en mode hybrid (0.8 = 4:5)
         "transition": "xfade",  # "xfade" | "cut"
         "transition_seconds": 0.25,
@@ -79,6 +79,21 @@ DEFAULTS: dict[str, Any] = {
         "loudness_lufs": -14.0,
         "audio_tracks": "first",  # "first" | "mix" (OBS multi-pistes)
         "keep_work_files": False,
+    },
+    "style": {
+        # Moteur de motion design. "enabled": false = ancien montage simple.
+        "enabled": True,
+        "channel_name": "",  # affiché dans le bandeau bas (lower third)
+        "accent_color": "",  # ex. "#B6F24A" : couleur fixe = identité de chaîne
+        "font": "",  # police imposée (sinon choisie automatiquement)
+        "long_intensity": 0.5,  # effets plus discrets sur le format long
+        "max_ramps_short": 1,
+        "max_ramps_long": 2,
+        "hud": True,
+        "music_generate": True,  # musique générée si assets/music est vide
+        "beat_sync": True,
+        "grade": True,
+        "subscribe_outro": True,
     },
     "music": {
         "enabled": True,  # utilisée seulement si assets/music contient des fichiers
@@ -119,6 +134,9 @@ DEFAULTS: dict[str, Any] = {
             "ISC", "MPL-2.0", "LGPL", "Unlicense", "Zlib", "PSF",
         ],
         "sandbox_timeout": 600,
+        "max_cycle_minutes": 45,  # un cycle ne peut jamais tourner indéfiniment
+        "min_ram_gb": 2.0,
+        "experiments": ["encode_profile", "motion_preset", "decode_accel", "scene_detector"],
     },
     "qa": {
         "max_black_ratio": 0.15,

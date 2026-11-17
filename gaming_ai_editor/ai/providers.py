@@ -22,7 +22,7 @@ from pathlib import Path
 from ..db import Database
 from ..ffutil import _popen_kwargs, run_ffmpeg
 
-LABELS = ["kill", "victoire", "fail", "drôle", "action", "rien"]
+LABELS = ["kill", "headshot", "victoire", "fail", "drôle", "action", "rien"]
 
 
 class CostGuard:
@@ -221,6 +221,43 @@ class ClaudeDirector:
             "hashtags": ["#gaming", "#gameplay", "#highlights", "#shorts"],
             "source": "local",
         }
+
+    def creative_texts(self, stem: str, analyses: list[dict]) -> dict:
+        """Accroche, mots d'impact et titre écrits par Claude. {} si indisponible.
+
+        Format : {"short": {"hook", "captions"}, "long": {"title"}}.
+        """
+        if not self.available():
+            return {}
+        if not self.guard.authorize("claude", "textes du montage", "subscription_cli"):
+            return {}
+        events = []
+        for a in analyses:
+            for e in sorted(a.get("events", []), key=lambda e: -e.get("strength", 0))[:10]:
+                events.append(f"{e['kind']} à {e['t']:.0f}s (force {e.get('strength', 0):.2f})")
+        prompt = (
+            "Tu écris les textes à l'écran d'un montage gaming TikTok en français, style "
+            "punchy. Événements détectés dans la vidéo « " + stem + " » :\n"
+            + "\n".join(events) +
+            "\nRéponds UNIQUEMENT en JSON : {\"hook\": \"accroche de 3 à 6 mots\", "
+            "\"captions\": [\"mot d'impact de 1 à 3 mots\", ...6 éléments], "
+            "\"title\": \"titre court pour YouTube\"}. Pas de hashtags, pas d'emoji. "
+            "N'invente pas de kill ni de victoire : décris l'action.")
+        try:
+            extra = ["--model", self.conf["model"]] if self.conf.get("model") else []
+            data = extract_json(run_cli(self.conf["command"], prompt, int(self.conf["timeout"]),
+                                        extra, cwd=self.cfg.work_dir))
+        except Exception as exc:
+            self.log(f"Textes Claude indisponibles ({type(exc).__name__}) : textes locaux.")
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        hook = str(data.get("hook", ""))[:48]
+        caps = [str(c)[:22] for c in data.get("captions", []) if isinstance(c, str) and c][:8]
+        title = str(data.get("title", ""))[:60]
+        self.log("Textes du montage écrits par Claude.")
+        return {"short": {"hook": hook, "captions": caps} if hook else {"captions": caps},
+                "long": {"title": title} if title else {}}
 
     def metadata(self, stem: str, plans: dict) -> dict:
         meta = self.local_metadata(stem, plans)

@@ -79,8 +79,8 @@ def test_registry_promote_and_rollback(orch):
     assert reg.rollback("encode_profile")["name"] == "essai-a"
     assert reg.rollback("encode_profile")["name"] == "builtin"
     assert reg.rollback("encode_profile") is None
-    assert reg.get(a)["status"] == "rolled_back" and reg.get(b)["status"] == "rolled_back"
-    assert [h["action"] for h in reg.history()][:2] == ["rollback", "rollback"]
+    assert reg.get(a)["status"] == "QUARANTINE" and reg.get(b)["status"] == "QUARANTINE"
+    assert [h["action"] for h in reg.history()][:2] == ["quarantine", "quarantine"]
 
 
 def test_license_gate():
@@ -118,6 +118,7 @@ def test_researcher_pauses_while_rendering(cfg, orch):
 
 
 def test_research_cycle_offline_promotes_only_verified_winners(cfg, orch):
+    cfg.data["research"]["experiments"] = ["encode_profile"]
     r = SkillsResearcher(cfg, orch.db, orch.activity)
     summary = r.run_cycle(offline=True)
     assert summary["status"] == "done", summary
@@ -130,7 +131,7 @@ def test_research_cycle_offline_promotes_only_verified_winners(cfg, orch):
         assert r.registry.rollback("encode_profile")["name"] == "builtin"
     else:
         assert active["name"] == "builtin"
-    rejected = orch.db.query("SELECT metrics FROM skills WHERE status='rejected'")
+    rejected = orch.db.query("SELECT metrics FROM skills WHERE status='REJECTED'")
     assert all(json.loads(row["metrics"]).get("verdict") for row in rejected)
     assert orch.db.one("SELECT status FROM research_runs")["status"] == "done"
     # un second cycle ne reteste pas ce qui a déjà été évalué
@@ -152,6 +153,29 @@ def test_reference_clip_comes_from_real_gameplay_when_available(cfg, orch, media
     assert abs(info.duration - 3) < 0.3
 
 
+def test_motion_and_gpu_experiments_record_measured_verdicts(cfg, orch):
+    cfg.data["research"]["candidates_per_cycle"] = 1
+    cfg.data["research"]["experiments"] = ["motion_preset", "decode_accel"]
+    r = SkillsResearcher(cfg, orch.db, orch.activity)
+    summary = r.run_cycle(offline=True)
+    assert summary["status"] == "done", summary
+    motion = summary["motion_preset"]
+    assert motion["baseline"]["qa_score"] > 0 and len(motion["tested"]) == 1
+    assert "score" in motion["tested"][0]["verdict"]
+    row = orch.db.one("SELECT status FROM skills WHERE kind='motion_preset' AND origin != 'builtin'")
+    assert row["status"] in ("VALIDATED", "REJECTED", "ACTIVE")
+    assert "none" in summary["decode_accel"]["options"]
+    assert summary["resources"]["ram_available_gb"] is None or \
+        summary["resources"]["ram_available_gb"] > 0
+
+
+def test_research_cycle_never_runs_forever(cfg, orch):
+    cfg.data["research"]["max_cycle_minutes"] = 0
+    summary = SkillsResearcher(cfg, orch.db, orch.activity).run_cycle(offline=True)
+    assert summary["status"] == "done"
+    assert summary["encode_profile"] == {"skipped": "durée maximale du cycle atteinte"}
+
+
 def test_scheduler_survives_shutdown(cfg, orch):
     sched = ResearchScheduler(cfg, orch.db, orch.activity)
     now = 1_000_000.0
@@ -168,6 +192,7 @@ def test_scheduler_survives_shutdown(cfg, orch):
 def test_scheduler_runs_a_cycle_when_triggered(cfg, orch):
     cfg.data["research"]["allow_network"] = False
     cfg.data["research"]["candidates_per_cycle"] = 1
+    cfg.data["research"]["experiments"] = ["encode_profile"]
     sched = ResearchScheduler(cfg, orch.db, orch.activity)
     sched.start()
     try:

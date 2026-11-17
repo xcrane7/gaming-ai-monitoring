@@ -37,6 +37,12 @@ def build_state(orch: Orchestrator, scheduler=None) -> dict:
         r["qa_report"] = _loads(r.pop("qa_report"), {})
         plan = _loads(r.pop("plan"), {})
         r["clips"] = len(plan.get("segments", []))
+        style = plan.get("style") or {}
+        r["style"] = (f"{style.get('palette_name')} · {style.get('look')} · "
+                      f"{style.get('transitions')}") if style.get("palette_name") else ""
+        r["effects"] = sum(len(seg.get("events", [])) for seg in plan.get("segments", []))
+        r["graphics"] = len(plan.get("graphics", []))
+        r["motion_score"] = r["qa_report"].get("motion_score")
         r["notes"] = plan.get("notes", [])
         r["name"] = Path(r["path"]).name
         r["exists"] = Path(r["path"]).exists()
@@ -209,7 +215,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": True, "message": "Cycle de recherche lancé."})
             elif path == "/api/skills/rollback":
                 restored = self.orch.skills.rollback(str(body.get("kind", "")),
-                                                     "rollback depuis le dashboard")
+                                                     "rollback depuis le dashboard",
+                                                     quarantine=False)
                 self._json({"ok": bool(restored),
                             "message": f"Version restaurée : {restored['name']}" if restored
                             else "Aucune version précédente à restaurer."})

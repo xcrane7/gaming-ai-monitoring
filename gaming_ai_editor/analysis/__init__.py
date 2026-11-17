@@ -23,6 +23,15 @@ def analyze_video(path: str | Path, cfg: dict, info: MediaInfo | None = None,
     info = info or probe(path)
     signals = extract_signals(path, info, cfg, on_progress, cancel_check)
     highlights, score = find_highlights(signals, cfg)
+    from ..engines import intelligence
+
+    intel = intelligence.analyze(path, info, signals)
+    # un pic détecté dans un menu ou un écran de pause n'est pas un moment de jeu
+    for h in highlights:
+        if intelligence.in_windows(h.peak, intel["ui_windows"]):
+            h.score = round(h.score * 0.1, 4)
+            h.label = "menu"
+    highlights.sort(key=lambda h: h.score, reverse=True)
     return {
         "path": str(path),
         "duration": info.duration,
@@ -35,6 +44,7 @@ def analyze_video(path: str | Path, cfg: dict, info: MediaInfo | None = None,
         "rms_db": [round(float(v), 2) for v in signals.rms_db],
         "motion": [round(float(v), 5) for v in signals.motion],
         "highlights": [h.to_dict() for h in highlights],
+        **intel,
         "analysis_seconds": round(time.time() - started, 2),
     }
 

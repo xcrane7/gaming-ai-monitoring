@@ -17,10 +17,36 @@ class Segment:
     score: float = 0.0
     label: str = ""
     peak: float = 0.0
+    events: list = field(default_factory=list)  # événements retenus et leurs effets
+    ramp: list = field(default_factory=list)  # [début, fin, vitesse mini] (temps source)
+    focus: list = field(default_factory=list)  # [[t du clip, x 0..1]] suivi de l'action
+    camera: dict = field(default_factory=dict)  # poussée, panoramique, tremblements...
+    vfx: dict = field(default_factory=dict)  # fenêtres des effets image (temps du clip)
+    caption: str = ""
 
     @property
     def duration(self) -> float:
+        """Durée prise dans la source."""
         return self.end - self.start
+
+    def speed_ramp(self):
+        if len(self.ramp) != 3:
+            return None
+        from ..engines.motion import SpeedRamp
+
+        return SpeedRamp(self.ramp[0] - self.start, self.ramp[1] - self.start, self.ramp[2])
+
+    @property
+    def out_duration(self) -> float:
+        """Durée dans le montage (un ralenti allonge le clip)."""
+        ramp = self.speed_ramp()
+        return self.duration + (ramp.extra if ramp else 0.0)
+
+    def map_time(self, t_src: float) -> float:
+        """Temps source -> temps dans le clip monté (tient compte du ralenti)."""
+        ramp = self.speed_ramp()
+        rel = t_src - self.start
+        return ramp.map(rel) if ramp else rel
 
 
 @dataclass
@@ -36,10 +62,31 @@ class EditPlan:
     max_seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
     title: str = ""
+    hook: str = ""  # texte d'accroche affiché au début
+    style: dict = field(default_factory=dict)  # identité visuelle (Style DNA)
+    transitions: list = field(default_factory=list)  # une transition xfade par jonction
+    music: dict = field(default_factory=dict)  # mode, tempo, temps forts, drop
+    graphics: list = field(default_factory=list)  # chronologie de la couche graphique
+    sfx: list = field(default_factory=list)  # effets sonores placés
+    effects: dict = field(default_factory=dict)  # résumé des effets utilisés
+
+    def offsets(self) -> list[float]:
+        """Instant de début de chaque clip dans le montage."""
+        overlap = self.transition_seconds if self.transition == "xfade" else 0.0
+        out, acc = [], 0.0
+        for seg in self.segments:
+            out.append(acc)
+            acc += seg.out_duration - overlap
+        return out
+
+    def junctions(self) -> list[float]:
+        """Instant visuel de chaque changement de clip (milieu de la transition)."""
+        overlap = self.transition_seconds if self.transition == "xfade" else 0.0
+        return [o + overlap / 2 for o in self.offsets()[1:]]
 
     @property
     def duration(self) -> float:
-        total = sum(s.duration for s in self.segments)
+        total = sum(s.out_duration for s in self.segments)
         if self.transition == "xfade" and len(self.segments) > 1:
             total -= (len(self.segments) - 1) * self.transition_seconds
         return total
@@ -124,8 +171,18 @@ def build_plan(fmt: str, analyses: list[dict], cfg, title: str = "") -> EditPlan
 
     candidates = []
     for a in analyses:
+        ui = a.get("ui_windows") or []
         for h in a.get("highlights", []):
-            candidates.append(_candidate(h, a["path"], float(a["duration"]), fc))
+            if h.get("label") == "menu" and any(x.get("label") != "menu"
+                                                 for x in a["highlights"]):
+                continue  # on ne monte pas un menu tant qu'il reste du jeu
+            cand = _candidate(h, a["path"], float(a["duration"]), fc)
+            for u0, u1 in ui:  # rogne les bords qui débordent sur un menu
+                if u0 <= cand.start < u1 < cand.peak:
+                    cand.start = u1
+                if cand.peak < u0 < cand.end <= u1 + 1e-6 or cand.peak < u0 < cand.end:
+                    cand.end = min(cand.end, u0)
+            candidates.append(cand)
     candidates.sort(key=lambda s: s.score, reverse=True)
 
     def overhead(n: int) -> float:
@@ -134,6 +191,9 @@ def build_plan(fmt: str, analyses: list[dict], cfg, title: str = "") -> EditPlan
     chosen: list[Segment] = []
     for cand in candidates:
         merged = _merge_same_source(chosen + [cand], merge_gap)
+        if len(merged) <= len(chosen) and \
+                max(s.duration for s in merged) > 1.25 * float(fc["clip_max"]):
+            continue  # ce passage fusionnerait en un clip trop long : on le laisse de côté
         effective = _total(merged) - overhead(len(merged))
         if effective > max_s:
             room = max_s - (_total(chosen) - overhead(len(chosen) + 1))

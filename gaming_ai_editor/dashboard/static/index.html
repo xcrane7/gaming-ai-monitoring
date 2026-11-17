@@ -40,8 +40,8 @@ h2:first-child{margin-top:0}
 .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.03em;border:1px solid var(--line);color:var(--muted)}
 .badge.pass,.badge.done,.badge.active{color:var(--ok);border-color:rgba(74,222,128,.4)}
 .badge.warn,.badge.queued,.badge.validated{color:var(--warn);border-color:rgba(251,191,36,.4)}
-.badge.fail,.badge.failed,.badge.rejected,.badge.rolled_back{color:var(--bad);border-color:rgba(248,113,113,.4)}
-.badge.running{color:var(--cyan);border-color:rgba(90,209,255,.4)}
+.badge.fail,.badge.failed,.badge.rejected,.badge.rolled_back,.badge.quarantine{color:var(--bad);border-color:rgba(248,113,113,.4)}
+.badge.running,.badge.testing{color:var(--cyan);border-color:rgba(90,209,255,.4)}
 .badge.fmt{color:var(--accent);border-color:rgba(182,242,74,.4)}
 .progress{height:6px;background:var(--panel2);border-radius:999px;overflow:hidden;margin-top:10px}
 .progress>div{height:100%;background:linear-gradient(90deg,var(--cyan),var(--accent));transition:width .6s}
@@ -117,8 +117,8 @@ const when = t => t ? new Date(t * 1000).toLocaleString("fr-FR", {day:"2-digit",
 const base = p => String(p || "").split(/[\\/]/).pop();
 const STATUS = {queued:"en file", running:"en cours", done:"terminé", failed:"échec", pass:"QA validée", warn:"QA avec réserve", fail:"QA refusée",
   active:"actif", rejected:"rejeté", validated:"validé", retired:"remplacé", rolled_back:"annulé", candidate:"à tester",
-  new:"nouveau", analyzing:"analyse", analyzed:"analysé"};
-const badge = s => `<span class="badge ${esc(s)}">${esc(STATUS[s] || s)}</span>`;
+  new:"nouveau", analyzing:"analyse", analyzed:"analysé", testing:"en test", quarantine:"quarantaine"};
+const badge = s => `<span class="badge ${esc(String(s).toLowerCase())}">${esc(STATUS[s] || STATUS[String(s).toLowerCase()] || s)}</span>`;
 let state = null, openRender = new Set(), openVideo = null, timelines = {};
 
 function toast(msg){ const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 3500); }
@@ -144,7 +144,7 @@ function renderChips(s){
 function renderMontage(s){
   const ok = s.renders.filter(r => r.qa_status !== "fail").length;
   const queue = s.jobs.filter(j => j.status === "queued" || j.status === "running").length;
-  $("tiles").innerHTML = [[s.videos.length, "vidéos sources"], [ok, "rendus validés"], [queue, "en traitement"], [s.research.skills.filter(k => k.status === "active").length, "skills actifs"]]
+  $("tiles").innerHTML = [[s.videos.length, "vidéos sources"], [ok, "rendus validés"], [queue, "en traitement"], [s.research.skills.filter(k => String(k.status).toUpperCase() === "ACTIVE").length, "skills actifs"]]
     .map(([n, l]) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
   $("jobs").innerHTML = s.jobs.length ? s.jobs.slice(0, 8).map(j => `
     <div class="card"><div class="row"><div class="grow"><div class="name">${esc(base(j.source) || "Compilation")}</div>
@@ -156,6 +156,7 @@ function renderMontage(s){
     <div class="card"><div class="name">${esc(r.name)}</div>
       <div class="row" style="margin:6px 0"><span class="badge fmt">${r.format === "short" ? "Short 9:16" : "YouTube 16:9"}</span>${badge(r.qa_status)}</div>
       <div class="sub">${esc(r.source)} · ${r.width}×${r.height} · ${dur(r.duration)} · ${r.clips} clip${r.clips > 1 ? "s" : ""} · ${esc(r.encoder || "")} en ${dur(r.render_seconds)}</div>
+      ${r.style ? `<div class="sub">Style ${esc(r.style)} · ${r.effects} effets · ${r.graphics} éléments animés${r.motion_score != null ? " · score QA montage " + r.motion_score + "/100" : ""}</div>` : ""}
       <details data-render="${r.id}" ${openRender.has(r.id) ? "open" : ""}><summary>Aperçu et contrôle qualité</summary>
       ${openRender.has(r.id) && r.exists ? `<video controls preload="metadata" src="/media/${r.id}"></video>` : ""}
       <ul class="checks">${(r.qa_report.checks || []).map(c => `<li><span class="s ${esc(c.status)}">${c.status === "pass" ? "✓" : c.status === "warn" ? "!" : "✕"}</span><span><b>${esc(c.name)}</b> — ${esc(c.detail)}</span></li>`).join("")}</ul>
@@ -183,19 +184,19 @@ async function toggleVideo(id){
   if (openVideo && !timelines[id]) { const r = await fetch(`/api/video/${id}/timeline`); if (r.ok) timelines[id] = await r.json(); }
   renderVideos(state);
 }
-const KIND = {encode_profile:"Réglages d'encodage", scene_detector:"Détecteur de changements de plan"};
+const KIND = {encode_profile:"Réglages d'encodage", scene_detector:"Détecteur de changements de plan", motion_preset:"Réglages du motion design", decode_accel:"Décodage matériel (GPU)"};
 function table(head, rows){ return rows.length ? `<div class="tablewrap"><table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` : `<div class="empty">Rien pour l'instant.</div>`; }
 function renderResearch(s){
   const r = s.research;
   $("rstate").textContent = r.running ? "Cycle de recherche en cours…" : r.enabled ? `Un cycle toutes les ${r.interval_hours} h, en priorité basse, en pause pendant les rendus` : "Chercheur désactivé dans la configuration";
   $("rnext").textContent = r.scheduler ? `Prochain cycle : ${when(r.next_run_at)} · Dernier : ${r.runs[0] ? when(r.runs[0].started_at) + " (" + r.runs[0].status + ")" : "aucun"}` : "Planification active uniquement avec « run » (ici : dashboard seul). Dernier cycle : " + (r.runs[0] ? when(r.runs[0].started_at) : "aucun");
   $("runresearch").disabled = r.running;
-  const active = r.skills.filter(k => k.status === "active");
+  const active = r.skills.filter(k => String(k.status).toUpperCase() === "ACTIVE");
   $("activeskills").innerHTML = active.map(k => `<div class="card"><div class="sub">${esc(KIND[k.kind] || k.kind)}</div><div class="name">${esc(k.name)} <span class="sub">v${esc(k.version)}</span></div>
     <div class="sub">Licence : ${esc(k.license || "—")} · actif depuis le ${when(k.activated_at)}</div>
     ${r.history.some(h => h.kind === k.kind && h.action === "promote" && h.skill_id === k.id && h.prev_skill_id) ? `<p><button class="ghost" onclick="post('/api/skills/rollback',{kind:'${esc(k.kind)}'})">Revenir à la version précédente</button></p>` : ""}</div>`).join("");
   $("experiments").innerHTML = table(["Skill", "Type", "État", "Mesure"], r.skills.filter(k => k.origin !== "builtin").map(k => `<tr><td>${esc(k.name)} <span class="sub">v${esc(k.version)}</span></td><td>${esc(KIND[k.kind] || k.kind)}</td><td>${badge(k.status)}</td><td>${esc(k.verdict)}</td></tr>`));
-  $("history").innerHTML = table(["Date", "Action", "Skill", "Raison"], r.history.map(h => `<tr><td class="num">${when(h.at)}</td><td>${h.action === "promote" ? "Activation" : "Rollback"}</td><td>${esc(h.name)} <span class="sub">v${esc(h.version)}</span></td><td>${esc(h.reason)}</td></tr>`));
+  $("history").innerHTML = table(["Date", "Action", "Skill", "Raison"], r.history.map(h => `<tr><td class="num">${when(h.at)}</td><td>${h.action === "promote" ? "Activation" : h.action === "quarantine" ? "Quarantaine" : "Rollback"}</td><td>${esc(h.name)} <span class="sub">v${esc(h.version)}</span></td><td>${esc(h.reason)}</td></tr>`));
   $("discoveries").innerHTML = table(["Outil", "Source", "Licence", "Statut", "Résumé"], r.discoveries.map(d => `<tr><td>${/^https:\/\//.test(d.url || "") ? `<a href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">${esc(d.name)}</a>` : esc(d.name)} <span class="sub">${esc(d.version)}</span></td><td>${esc(d.source)}</td><td>${esc(d.license)}</td><td>${esc(d.status)}</td><td>${esc(d.summary)}</td></tr>`));
 }
 function renderSystem(s){

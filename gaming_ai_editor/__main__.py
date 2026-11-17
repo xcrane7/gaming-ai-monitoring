@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.kind:
                 print("--kind est requis pour un rollback.")
                 return 2
-            restored = researcher.registry.rollback(args.kind)
+            restored = researcher.registry.rollback(args.kind, quarantine=False)
             print(f"Version restaurée : {restored['name']} v{restored['version']}"
                   if restored else "Aucune version précédente à restaurer.")
         return 0

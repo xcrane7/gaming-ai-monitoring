@@ -86,6 +86,13 @@ class Service:
             if not job:
                 self.stop_event.wait(2)
                 continue
+            from . import resources
+
+            # un seul rendu à la fois (verrou de l'orchestrateur) et assez de mémoire libre
+            resources.wait_for_room(1.5, 0.5, timeout=300, stop=self.stop_event,
+                                    log=lambda m: self.orch.log(m, "warn"))
+            if self.stop_event.is_set():
+                break
             try:
                 self.orch.process_job(job["id"])
             except Exception:

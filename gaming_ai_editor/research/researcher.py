@@ -26,6 +26,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import numpy as np
+
 from .. import synth
 from ..analysis.signals import video_signals
 from ..db import Database
@@ -34,13 +36,31 @@ from ..editor.render import Renderer
 from ..ffutil import Cancelled, FFmpegError, RenderActivity, encoder_works, probe, run_ffmpeg
 from ..qa.benchmark import measure_encode
 from ..qa.checks import FAIL, run_qa
-from .registry import SkillRegistry
+from .. import resources
+from .registry import REJECTED, TESTING, VALIDATED, SkillRegistry
 from .sandbox import RUNNERS, Sandbox, SandboxError, run_runner
 
 PYPI_WATCHLIST = ["scenedetect", "faster-whisper", "auto-editor", "ffmpeg-normalize",
-                  "librosa", "ultralytics", "moviepy"]
+                  "librosa", "ultralytics", "moviepy", "skia-python", "pycairo", "moderngl",
+                  "manim", "vidgear", "decord", "pyav", "beat-this"]
+NPM_WATCHLIST = ["remotion", "@remotion/renderer", "lottie-web", "@motion-canvas/core"]
 GITHUB_QUERIES = ["gaming highlight detection", "video highlight detection ffmpeg",
-                  "automatic video editor shorts"]
+                  "automatic video editor shorts", "motion graphics python video",
+                  "kinetic typography video generator", "gaming montage editor",
+                  "remotion template gaming", "ffmpeg gpu filters nvenc",
+                  "beat detection music python"]
+# Filtres FFmpeg accélérés : s'ils apparaissent après une mise à jour de FFmpeg,
+# le chercheur les signale et teste ceux qu'il sait mesurer.
+GPU_FILTERS = ["scale_cuda", "overlay_cuda", "hwupload_cuda", "libplacebo", "xfade_opencl",
+               "scale_npp", "thumbnail_cuda", "bilateral_cuda", "chromakey_cuda"]
+HWACCELS = ["cuda", "d3d11va", "dxva2", "qsv", "vaapi"]
+MOTION_CANDIDATES = [
+    ("punchy", {"punch": 1.3, "shake": 1.0, "flash": 1.0}),
+    ("soft", {"punch": 0.8, "shake": 0.7, "flash": 0.8}),
+    ("heavy-shake", {"punch": 1.0, "shake": 1.4, "flash": 1.1}),
+    ("bright", {"punch": 1.1, "shake": 0.9, "flash": 1.35}),
+    ("subtle", {"punch": 0.7, "shake": 0.5, "flash": 0.6}),
+]
 
 # Outils externes que le chercheur a le droit d'installer et d'évaluer tout seul :
 # uniquement ceux pour lesquels un adaptateur (runner) relu existe dans ce dépôt.
@@ -196,6 +216,37 @@ class SkillsResearcher:
                        info.get("summary"), requires)
             except Exception as exc:
                 errors.append(f"pypi:{name}: {type(exc).__name__}")
+        for name in NPM_WATCHLIST:
+            try:
+                info = _http_json("https://registry.npmjs.org/" + urllib.parse.quote(name, safe="@")
+                                  + "/latest")
+                lic = info.get("license") or "inconnue"
+                if isinstance(lic, dict):
+                    lic = lic.get("type", "inconnue")
+                upsert("npm", name, info.get("version", ""), str(lic),
+                       f"https://www.npmjs.com/package/{name}", info.get("description"),
+                       sorted((info.get("dependencies") or {}).keys())[:20])
+            except Exception as exc:
+                errors.append(f"npm:{name}: {type(exc).__name__}")
+        try:  # capacités GPU de l'installation FFmpeg locale
+            from ..ffutil import ffmpeg_bin
+            import subprocess as _sp
+
+            listed = _sp.run([ffmpeg_bin(), "-hide_banner", "-filters"], capture_output=True,
+                             text=True, timeout=30).stdout
+            hw = _sp.run([ffmpeg_bin(), "-hide_banner", "-hwaccels"], capture_output=True,
+                         text=True, timeout=30).stdout
+            for f in GPU_FILTERS:
+                if f" {f} " in listed:
+                    upsert("ffmpeg", f, "", "LGPL", "https://ffmpeg.org/ffmpeg-filters.html",
+                           "filtre accéléré disponible dans ce FFmpeg", [])
+            for h in HWACCELS:
+                if h in hw.split():
+                    upsert("ffmpeg", f"hwaccel:{h}", "", "LGPL",
+                           "https://trac.ffmpeg.org/wiki/HWAccelIntro",
+                           "décodage matériel proposé par ce FFmpeg", [])
+        except Exception as exc:
+            errors.append(f"ffmpeg: {type(exc).__name__}")
         for query in GITHUB_QUERIES:
             try:
                 data = _http_json("https://api.github.com/search/repositories?"
@@ -307,7 +358,7 @@ class SkillsResearcher:
             todo = []
             for name, args in ENCODE_CANDIDATES[family]:
                 known = self.db.one("SELECT id FROM skills WHERE kind='encode_profile' "
-                                    "AND name=? AND status != 'candidate'", (name,))
+                                    "AND name=? AND status NOT IN ('CANDIDATE', 'TESTING')", (name,))
                 if not known and args + _RATE_CAP != base_args:
                     todo.append((name, args + _RATE_CAP))
             todo = todo[:per_cycle]
@@ -319,10 +370,11 @@ class SkillsResearcher:
                 profile = copy.deepcopy(active["params"])
                 profile[family]["final"] = args
                 skill_id = self.registry.add_candidate("encode_profile", name, "1", profile)
+                self.registry.set_status(skill_id, TESTING)
                 try:
                     cand = self._measure(ref, args)
                 except FFmpegError as exc:
-                    self.registry.record_result(skill_id, "rejected",
+                    self.registry.record_result(skill_id, REJECTED,
                                                 {"error": str(exc)[:300]})
                     report["tested"].append({"name": name, "verdict": "erreur d'encodage"})
                     continue
@@ -330,7 +382,7 @@ class SkillsResearcher:
                 metrics = {"baseline": base, "candidate": cand, "verdict": why,
                            "family": family, "reference": ref.name}
                 score = round(cand["fps"] / max(base["fps"], 1e-6), 3)
-                self.registry.record_result(skill_id, "validated" if ok else "rejected",
+                self.registry.record_result(skill_id, VALIDATED if ok else REJECTED,
                                             metrics, score)
                 report["tested"].append({"name": name, "ok": ok, "verdict": why})
                 self.log(f"Encodage « {name} » : {'RETENU' if ok else 'rejeté'} — {why}")
@@ -340,7 +392,7 @@ class SkillsResearcher:
                 skill_id, _, name, why, profile = winner
                 verified, detail = self._verify_profile(profile)
                 if not verified:
-                    self.registry.record_result(skill_id, "rejected", {"verdict": detail})
+                    self.registry.record_result(skill_id, REJECTED, {"verdict": detail})
                     self.log(f"« {name} » non intégré : {detail}", "warn")
                     continue
                 self.registry.promote(skill_id, why)
@@ -366,7 +418,7 @@ class SkillsResearcher:
             version = row["version"]
             skill_name = f"{adapter['impl']}"
             if self.db.one("SELECT id FROM skills WHERE kind=? AND name=? AND version=? "
-                           "AND status != 'candidate'", (adapter["kind"], skill_name, version)):
+                           "AND status NOT IN ('CANDIDATE', 'TESTING')", (adapter["kind"], skill_name, version)):
                 continue  # cette version a déjà été évaluée
             if not row["license_ok"]:
                 report["tested"].append({"name": name, "verdict": "licence refusée"})
@@ -395,6 +447,7 @@ class SkillsResearcher:
                           "runner": adapter["runner"], "package": f"{name}=={version}"}
                 skill_id = self.registry.add_candidate(adapter["kind"], skill_name, version,
                                                        params, row["license"], f"pypi:{name}")
+                self.registry.set_status(skill_id, TESTING)
                 t0 = time.time()
                 result = run_runner(python, adapter["runner"], {"video": str(clip)},
                                     int(self.rc["sandbox_timeout"]), low_priority=True)
@@ -402,7 +455,7 @@ class SkillsResearcher:
                         "seconds": round(time.time() - t0, 3)}
             except (SandboxError, KeyError) as exc:
                 if skill_id:
-                    self.registry.record_result(skill_id, "rejected", {"error": str(exc)[:400]})
+                    self.registry.record_result(skill_id, REJECTED, {"error": str(exc)[:400]})
                 report["tested"].append({"name": name, "version": version,
                                          "verdict": f"bac à sable en échec : {str(exc)[:200]}"})
                 self.log(f"{name} {version} : bac à sable en échec ({str(exc)[:160]})", "warn")
@@ -414,7 +467,7 @@ class SkillsResearcher:
                    f"durée {cand['seconds']}s (actuel : {base['seconds']}s)")
             verdict = ("plus précis" if better else "plus rapide" if faster
                        else "pas de gain suffisant") + f" — {why}"
-            self.registry.record_result(skill_id, "validated" if ok else "rejected",
+            self.registry.record_result(skill_id, VALIDATED if ok else REJECTED,
                                         {"baseline": base, "candidate": cand, "verdict": verdict,
                                          "license": row["license"]}, cand["f1"])
             self.log(f"Détecteur de scènes {name} {version} : "
@@ -428,22 +481,184 @@ class SkillsResearcher:
             report["tested"].append(entry)
         return report
 
+    # -- 4. réglages du motion design -----------------------------------------------------
+    def _motion_test_plan(self, src: Path, preset: dict):
+        from ..editor.plan import EditPlan, Segment
+
+        plan = EditPlan(format="short", width=360, height=640, fps=30,
+                        segments=[Segment(str(src), 1.0, 6.5, 1.0, "test", 3.0),
+                                  Segment(str(src), 7.5, 13.0, 1.0, "test", 9.0)],
+                        transition="xfade", transition_seconds=0.25, min_seconds=5,
+                        max_seconds=60)
+        analysis = {"path": str(src), "duration": 14.0, "fps": 30,
+                    "highlights": [], "events": [
+                        {"t": 3.0, "kind": "explosion", "strength": 0.9},
+                        {"t": 4.6, "kind": "impact", "strength": 0.6},
+                        {"t": 9.0, "kind": "impact", "strength": 0.8},
+                        {"t": 11.0, "kind": "shot", "strength": 0.5}],
+                    "color": {"hue": 0.6, "saturation": 0.3, "luma": 0.4},
+                    "pace": {"events_per_minute": 20, "motion_mean": 0.08}, "focus": {}}
+        from ..engines import editing
+
+        editing.direct(plan, [analysis], self.cfg, None, "motion-research", None)
+        return plan
+
+    def _score_motion(self, preset: dict) -> dict:
+        """Rend un court montage de test avec ce réglage et le note (QA + lisibilité des impacts)."""
+        from ..qa.motion import _gray_frames, run_motion_qa
+
+        src = self.cfg.data_dir / "benchmark" / "motion_source.mp4"
+        if not src.exists():
+            synth.make_gameplay(src, duration=14, width=640, height=360, fps=30,
+                                bursts=[(2.8, 3.4), (4.4, 4.9), (8.8, 9.4), (10.8, 11.3)],
+                                cut_every=7, noise=20)
+        plan = self._motion_test_plan(src, preset)
+        out = self.cfg.data_dir / "benchmark" / "motion_out.mp4"
+        work = self.cfg.data_dir / "benchmark" / "motion_work"
+        started = time.time()
+        try:
+            res = self._guarded(Renderer(self.cfg, None, self.log, motion_preset=preset).render,
+                                plan, out, work)
+            qa = run_motion_qa(out, plan.to_dict(), res)
+            luma, diff = _gray_frames(out)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        seconds = time.time() - started
+        offsets = plan.offsets()
+        hits = [off + seg.map_time(e["t"]) for seg, off in zip(plan.segments, offsets)
+                for e in seg.events]
+        # lisibilité : l'image réagit-elle nettement aux impacts ? (bornée pour ne pas
+        # récompenser l'excès, déjà pénalisé par le contrôle de scintillement)
+        react = [float(diff[int(h * 30):int(h * 30) + 6].mean()) for h in hits
+                 if int(h * 30) + 6 < diff.size]
+        base = float(np.median(diff)) or 1e-3
+        readability = min(10.0, 10 * (np.mean(react) / base - 1) / 3) if react else 0.0
+        failed = [c["name"] for c in qa["checks"] if c["status"] == FAIL]
+        out.unlink(missing_ok=True)
+        return {"score": round(qa["score"] + readability, 2), "qa_score": qa["score"],
+                "readability": round(readability, 2), "failed": failed,
+                "seconds": round(seconds, 2), "metric": "motion_v1"}
+
+    def research_motion_preset(self) -> dict:
+        active = self.registry.active("motion_preset")
+        todo = []
+        for name, params in MOTION_CANDIDATES:
+            if not self.db.one("SELECT id FROM skills WHERE kind='motion_preset' AND name=? "
+                               "AND status NOT IN ('CANDIDATE', 'TESTING')", (name,)):
+                todo.append((name, params))
+        todo = todo[: int(self.rc.get("candidates_per_cycle", 3))]
+        if not todo:
+            return {"tested": [], "promoted": None}
+        base = self._score_motion(active["params"])
+        if active.get("score") is None:
+            self.registry.record_result(active["id"], active["status"],
+                                        {**(active.get("metrics") or {}), **base}, base["score"])
+        report = {"baseline": base, "tested": [], "promoted": None}
+        best = None
+        for name, params in todo:
+            sid = self.registry.add_candidate("motion_preset", name, "1", params)
+            self.registry.set_status(sid, TESTING)
+            m = self._score_motion(params)
+            better = not m["failed"] and m["score"] >= base["score"] + 1.0 \
+                and m["seconds"] <= base["seconds"] * 1.3
+            why = (f"score {m['score']} contre {base['score']} (actif), lisibilité "
+                   f"{m['readability']}, rendu {m['seconds']} s"
+                   + (f", QA en échec : {', '.join(m['failed'])}" if m["failed"] else ""))
+            self.registry.record_result(sid, VALIDATED if better else REJECTED,
+                                        {**m, "verdict": why}, m["score"])
+            self.log(f"Réglage motion « {name} » : {'RETENU' if better else 'rejeté'} — {why}")
+            report["tested"].append({"name": name, "ok": better, "verdict": why})
+            if better and (best is None or m["score"] > best[1]):
+                best = (sid, m["score"], name, why)
+        if best and self.rc["auto_integrate"]:
+            self.registry.promote(best[0], best[3])
+            report["promoted"] = best[2]
+        return report
+
+    # -- 5. décodage matériel (GPU) -----------------------------------------------------------
+    def research_decode_accel(self) -> dict:
+        from ..analysis.signals import video_signals
+        from ..ffutil import ffmpeg_bin
+        import subprocess as _sp
+
+        hw = _sp.run([ffmpeg_bin(), "-hide_banner", "-hwaccels"], capture_output=True, text=True,
+                     timeout=30).stdout.split()
+        options = ["none"] + [h for h in HWACCELS if h in hw]
+        ref = self._reference()
+        info = probe(ref)
+        ac = self.cfg["analysis"]
+        results = {}
+        for opt in options:
+            try:
+                t0 = time.time()
+                motion, _ = self._guarded(video_signals, ref, info, float(ac["window_seconds"]),
+                                          float(ac["video_fps"]), int(ac["video_width"]),
+                                          int(ac["video_height"]), opt)
+                results[opt] = {"seconds": round(time.time() - t0, 3),
+                                "motion": [round(float(x), 5) for x in motion]}
+            except Exception as exc:
+                results[opt] = {"error": str(exc)[:200]}
+        base = results.get("none", {})
+        report = {"options": {k: v.get("seconds", v.get("error")) for k, v in results.items()},
+                  "promoted": None}
+        if "seconds" not in base:
+            return report
+        best = None
+        for opt, r in results.items():
+            if opt == "none" or "seconds" not in r:
+                continue
+            same = np.allclose(r["motion"], base["motion"], atol=0.01)
+            faster = r["seconds"] <= base["seconds"] / 1.1
+            sid = self.registry.add_candidate("decode_accel", opt, "1", {"hwaccel": opt},
+                                              "LGPL", "ffmpeg")
+            ok = same and faster
+            why = (f"{r['seconds']} s contre {base['seconds']} s sur CPU"
+                   + ("" if same else ", résultats d'analyse différents"))
+            self.registry.record_result(sid, VALIDATED if ok else REJECTED,
+                                        {"verdict": why, "metric": "decode_v1"},
+                                        round(base["seconds"] / r["seconds"], 3))
+            if ok and (best is None or r["seconds"] < best[1]):
+                best = (sid, r["seconds"], opt, why)
+        if best and self.rc["auto_integrate"]:
+            active = self.registry.active("decode_accel")
+            if not active or active["params"].get("hwaccel") != best[2]:
+                self.registry.promote(best[0], best[3])
+                report["promoted"] = best[2]
+        return report
+
     # -- cycle -------------------------------------------------------------------------
+    def _deadline_passed(self, started: float) -> bool:
+        return time.time() - started > float(self.rc.get("max_cycle_minutes", 45)) * 60
+
     def run_cycle(self, offline: bool = False) -> dict:
         run_id = self.db.insert("research_runs", started_at=time.time(), status="running")
         summary: dict = {"run_id": run_id}
         self.pauses = 0
         self.log("Début du cycle de recherche.")
         status = "done"
+        started = time.time()
+        summary["resources"] = resources.snapshot()
         try:
             self._wait_if_rendering()
+            ok, why = resources.has_room(float(self.rc.get("min_ram_gb", 2.0)), 1.0)
+            if not ok:
+                raise Cancelled(f"ressources insuffisantes : {why}")
             if self.rc["allow_network"] and not offline:
                 summary["discovery"] = self.discover()
             else:
                 summary["discovery"] = {"skipped": "hors ligne"}
-            summary["encode_profile"] = self.research_encode_profile()
+            steps = [("encode_profile", self.research_encode_profile),
+                     ("motion_preset", self.research_motion_preset),
+                     ("decode_accel", self.research_decode_accel)]
             if not offline:
-                summary["scene_detector"] = self.research_scene_detector()
+                steps.append(("scene_detector", self.research_scene_detector))
+            for name, step in steps:
+                if self._deadline_passed(started):
+                    summary[name] = {"skipped": "durée maximale du cycle atteinte"}
+                    continue
+                if name not in self.rc.get("experiments", [n for n, _ in steps]):
+                    continue
+                summary[name] = step()
         except Cancelled:
             status = "interrupted"
         except Exception as exc:
@@ -463,7 +678,8 @@ class SkillsResearcher:
             "interval_hours": self.rc["interval_hours"],
             "next_run_at": self.db.kv_get("research.next_run_at"),
             "active": {kind: (self.registry.active(kind) or {}).get("name")
-                       for kind in ("encode_profile", "scene_detector")},
+                       for kind in ("encode_profile", "scene_detector", "motion_preset",
+                                    "decode_accel")},
             "last_runs": self.db.query(
                 "SELECT id, started_at, finished_at, status FROM research_runs "
                 "ORDER BY id DESC LIMIT 5"),

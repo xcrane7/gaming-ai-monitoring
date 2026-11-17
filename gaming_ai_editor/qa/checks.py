@@ -62,7 +62,8 @@ def measure(path: str | Path) -> dict:
     }
 
 
-def run_qa(path: str | Path, plan: dict, cfg, originals_intact: bool | None = None) -> dict:
+def run_qa(path: str | Path, plan: dict, cfg, originals_intact: bool | None = None,
+           render_info: dict | None = None) -> dict:
     """Retourne un rapport {status, checks[...]}. `plan` est EditPlan.to_dict()."""
     started = time.time()
     path = Path(path)
@@ -134,11 +135,24 @@ def run_qa(path: str | Path, plan: dict, cfg, originals_intact: bool | None = No
         checks.append(_check("volume (LUFS)", PASS if ok else WARN,
                              f"{m['loudness_lufs']:.1f} LUFS (cible {target:g})",
                              m["loudness_lufs"]))
+    motion_score = None
+    if plan.get("style") and (plan.get("graphics") or plan.get("sfx")):
+        from .motion import run_motion_qa
+
+        try:
+            motion = run_motion_qa(path, plan, render_info)
+            checks.extend(motion["checks"])
+            motion_score = motion["score"]
+        except Exception as exc:  # une mesure qui plante ne doit pas masquer le rendu
+            checks.append(_check("contrôle du montage animé", WARN, f"mesure impossible : {exc}"))
     if originals_intact is not None:
         checks.append(_check("originaux intacts", PASS if originals_intact else FAIL,
                              "Empreintes identiques avant/après." if originals_intact
                              else "UNE SOURCE A ÉTÉ MODIFIÉE PENDANT LE TRAITEMENT."))
-    return _report(path, checks, started)
+    report = _report(path, checks, started)
+    if motion_score is not None:
+        report["motion_score"] = motion_score
+    return report
 
 
 def _report(path: Path, checks: list[dict], started: float) -> dict:

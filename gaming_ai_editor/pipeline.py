@@ -20,6 +20,7 @@ from .db import Database
 from .editor import subtitles as subs
 from .editor.plan import EditPlan, build_plan
 from .editor.render import Renderer
+from .engines import editing
 from .ffutil import RenderActivity, probe
 from .qa.checks import FAIL, fingerprint, run_qa
 from .research.registry import SkillRegistry
@@ -84,7 +85,11 @@ class Orchestrator:
             if job_id:
                 self._stage(job_id, "analyse", 0.02 + 0.18 * p)
 
-        result = analysis_mod.analyze_video(path, self.cfg["analysis"], info, progress)
+        acfg = dict(self.cfg["analysis"])
+        accel = self.skills.active("decode_accel")
+        if accel:
+            acfg["hwaccel"] = accel["params"].get("hwaccel", acfg.get("hwaccel", "auto"))
+        result = analysis_mod.analyze_video(path, acfg, info, progress)
         detector = self.skills.active("scene_detector")
         if detector and detector["params"].get("impl") != "builtin":
             from .research.sandbox import run_scene_detector
@@ -127,10 +132,17 @@ class Orchestrator:
         folder, suffix = FORMATS[fmt]
         work = self.cfg.work_dir / f"job_{job_id}_{fmt}"
         staged = self.cfg.work_dir / f"job_{job_id}_{fmt}.mp4"
-        profile = (self.skills.active("encode_profile") or {}).get("params") or None
+        active_profile = self.skills.active("encode_profile") or {}
+        active_motion = self.skills.active("motion_preset") or {}
+        profile = active_profile.get("params") or None
+        preset = active_motion.get("params") or None
         attempts = [(plan, self.cfg["render"]["encoder"])]
         safe = EditPlan.from_dict(plan.to_dict())
         safe.transition, safe.transition_seconds = "cut", 0.0
+        # mode prudent : sans effets, sans ralentis (durées et calage recalculés)
+        safe.style, safe.graphics, safe.sfx, safe.transitions = {}, [], [], []
+        for seg in safe.segments:
+            seg.ramp, seg.camera, seg.vfx, seg.focus, seg.events = [], {}, {}, [], []
         attempts.append((safe, "cpu"))  # second essai prudent : CPU + coupes franches
         report: dict = {}
         result: dict = {}
@@ -140,7 +152,8 @@ class Orchestrator:
                 cfg = Config(self.cfg.root, {**self.cfg.data,
                                              "render": {**self.cfg["render"],
                                                         "encoder": encoder}})
-            renderer = Renderer(cfg, profile if attempt == 1 else None, self.log)
+            renderer = Renderer(cfg, profile if attempt == 1 else None, self.log,
+                                preset if attempt == 1 else None)
             label = f"rendu {fmt}" + (" (2e essai)" if attempt > 1 else "")
             try:
                 result = renderer.render(
@@ -149,13 +162,22 @@ class Orchestrator:
                     cues)
                 self._stage(job_id, f"QA {fmt}", base + span * 0.9)
                 intact = all(fingerprint(src) == fp for src, fp in originals.items())
-                report = run_qa(staged, p.to_dict(), self.cfg, intact)
+                report = run_qa(staged, p.to_dict(), self.cfg, intact, result)
             except Exception as exc:
                 report = {"status": FAIL, "checks": [
                     {"name": "rendu", "status": FAIL, "detail": str(exc)[:600], "value": None}]}
                 self.log(f"{label} en échec : {str(exc)[:300]}", "error")
             plan_used = p
             if report["status"] != FAIL:
+                if attempt > 1:
+                    # le mode prudent réussit là où le réglage actif échouait :
+                    # les skills non d'origine en production sont mis en quarantaine
+                    for kind in ("encode_profile", "motion_preset"):
+                        restored = self.skills.quarantine_active(
+                            kind, f"rendu {fmt} de la tâche {job_id} en échec")
+                        if restored:
+                            self.log(f"Skill {kind} mis en quarantaine, retour à "
+                                     f"« {restored['name']} ».", "warn")
                 break
             if attempt == 1:
                 self.log(f"QA {fmt} en échec, nouvel essai en mode prudent.", "warn")
@@ -196,6 +218,16 @@ class Orchestrator:
                 self.log(f"Sous-titres ({origin}) : {len(found)} répliques pour "
                          f"{Path(a['path']).name}")
         plans = {fmt: build_plan(fmt, analyses, self.cfg) for fmt in formats}
+        if self.cfg["style"]["enabled"]:
+            texts = ClaudeDirector(self.cfg, self.guard, self.log).creative_texts(stem, analyses)
+            music_info = self._music_info(stem)
+            key = originals[analyses[0]["path"]][:16]
+            for fmt, plan in plans.items():
+                editing.direct(plan, analyses, self.cfg, texts.get(fmt), key + fmt, music_info)
+                self.log(f"{fmt} : style « {plan.style.get('palette_name')} / "
+                         f"{plan.style.get('look')} / {plan.style.get('transitions')} », "
+                         f"{sum(len(s.events) for s in plan.segments)} moments animés, "
+                         f"{len(plan.graphics)} éléments graphiques, {len(plan.sfx)} sons")
         outputs = []
         span = 0.75 / max(1, len(formats))
         self.activity.begin()
@@ -219,6 +251,26 @@ class Orchestrator:
                                encoding="utf-8")
         report["report_path"] = str(report_path)
         return report
+
+    def _music_info(self, stem: str) -> dict | None:
+        """Musique fournie dans assets/music : tempo et temps détectés pour caler les coupes."""
+        if not self.cfg["music"]["enabled"]:
+            return None
+        from .editor.render import pick_music
+        from .engines.audio import detect_beats
+
+        found = pick_music(self.cfg.path("music"), stem)
+        if not found:
+            return None
+        try:
+            beats = detect_beats(found)
+        except Exception as exc:
+            self.log(f"Analyse rythmique impossible pour {found.name} : {exc}", "warn")
+            return None
+        if beats["bpm"] <= 0:
+            return None
+        self.log(f"Musique {found.name} : {beats['bpm']} BPM détectés.")
+        return {"path": str(found), **beats}
 
     # -- tâches ------------------------------------------------------------------
     def process_job(self, job_id: int) -> dict:
