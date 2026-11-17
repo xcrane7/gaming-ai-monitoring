@@ -58,14 +58,24 @@ def extract_json(text: str):
     raise ValueError("Aucun JSON dans la réponse")
 
 
+SHORT_INSTRUCTION = "Reponds a la demande ci-dessus, uniquement en JSON."
+
+
 def run_cli(command: str, prompt: str, timeout: int, extra_args: list[str] | None = None,
-            cwd: Path | None = None) -> str:
+            cwd: Path | None = None, arg_prompt: str = SHORT_INSTRUCTION) -> str:
+    """Appelle le CLI d'un abonnement (gemini, claude) en mode non interactif.
+
+    Le texte long passe par l'entrée standard ; seule une courte ligne sans caractère
+    spécial passe en argument `-p`. Sous Windows, `gemini` et `claude` sont des
+    fichiers .cmd : un argument multi-ligne y serait tronqué et les caractères
+    & | % ^ < > interprétés par l'invite de commandes.
+    """
     exe = shutil.which(command)
     if not exe:
         raise FileNotFoundError(command)
-    proc = subprocess.run([exe, *(extra_args or []), "-p", prompt], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=timeout,
-                          cwd=cwd, **_popen_kwargs())
+    proc = subprocess.run([exe, *(extra_args or []), "-p", arg_prompt], input=prompt,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, cwd=cwd, **_popen_kwargs())
     if proc.returncode != 0:
         raise RuntimeError(f"{command} code {proc.returncode}: {proc.stderr.strip()[-300:]}")
     return proc.stdout
@@ -171,8 +181,10 @@ class GeminiAnalyst:
                 return analysis
             if route == "cli":
                 extra = ["-m", self.conf["model"]] if self.conf.get("model") else []
+                refs = " ".join(f"@{path.name}" for _, path in frames)  # noms sans espace
                 text = run_cli(self.conf["command"], self._prompt(analysis, frames, True),
-                               int(self.conf["timeout"]), extra, cwd=work)
+                               int(self.conf["timeout"]), extra, cwd=work,
+                               arg_prompt=f"Images des moments : {refs} . {SHORT_INSTRUCTION}")
             else:
                 text = self._call_api(self._prompt(analysis, frames, False), frames)
             verdicts = extract_json(text)

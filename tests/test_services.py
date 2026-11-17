@@ -243,6 +243,21 @@ def _stub(tmp_path: Path, name: str, reply: str) -> str:
     return str(script)
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="stubs exécutables POSIX")
+def test_cli_prompt_goes_through_stdin(tmp_path):
+    """Le long texte (multi-ligne, caractères spéciaux) arrive intact par l'entrée standard."""
+    from gaming_ai_editor.ai.providers import run_cli
+
+    echo = tmp_path / "echo_cli"
+    echo.write_text(f"#!{sys.executable}\nimport sys, json\n"
+                    "print(json.dumps({'stdin': sys.stdin.read(), 'argv': sys.argv[1:]}))\n")
+    echo.chmod(echo.stat().st_mode | stat.S_IEXEC)
+    text = "Ligne 1 & 2 | 50 % ^ <x>\nLigne 2 « accents »"
+    out = json.loads(run_cli(str(echo), text, 20, ["-m", "x"], arg_prompt="court"))
+    assert out["stdin"] == text
+    assert out["argv"] == ["-m", "x", "-p", "court"]
+
+
 def test_extract_json():
     assert extract_json('Voici :\n```json\n[{"index": 0}]\n```') == [{"index": 0}]
     assert extract_json('ok {"title": "A"} fin') == {"title": "A"}

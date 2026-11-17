@@ -91,6 +91,25 @@ sont utilisés, s'ils sont installés et connectés : cela ne déclenche aucun a
 `"allow_paid_api": true` dans `config.json` et fourni une clé. Chaque appel (autorisé ou
 refusé) est journalisé et visible dans l'onglet *Système* du dashboard.
 
+### Brancher Gemini (gratuit avec ton compte Google)
+
+1. Installe [Node.js](https://nodejs.org) (version LTS).
+2. Dans PowerShell : `npm install -g @google/gemini-cli`
+3. Lance `gemini` une fois, choisis **Login with Google** et connecte-toi. Tape `/quit`.
+4. Vérifie : `.venv\Scripts\python -m gaming_ai_editor inspect` doit afficher `CLI gemini : C:\...`.
+5. Relance `start.bat`. Dans le dashboard, onglet *Système* : « Gemini : CLI d'abonnement détecté ».
+
+Ensuite, pour chaque vidéo, l'application extrait une image par moment fort et demande à
+Gemini de l'étiqueter (kill, headshot, victoire, fail, drôle…). Ces étiquettes déclenchent
+la notification « Élimination », le tampon HEADSHOT et le bandeau VICTOIRE.
+
+### Faire travailler Gemini sur le code du projet
+
+Gemini CLI peut aussi modifier le projet, comme Claude Code. Ouvre PowerShell dans le
+dossier du projet et lance `gemini` : il lit automatiquement [`GEMINI.md`](GEMINI.md), qui
+lui explique le projet et ses règles. Ne fais pas travailler Claude Code et Gemini en
+même temps sur les mêmes fichiers.
+
 ## Skills Researcher
 
 Toutes les 6 heures, en priorité basse, et en pause dès qu'un rendu démarre :
@@ -169,7 +188,8 @@ Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) �
 
 - **NVENC** sur la RTX 5070 Ti (aucun GPU ici ; seul le repli CPU a été testé) ;
 - les scripts `.bat` et le démarrage automatique Windows ;
-- le **CLI Gemini** réel (testé avec un programme factice) : sans lui, pas de kill feed
+- le **CLI Gemini** connecté à un compte (ses options ont été vérifiées sur la version 0.68,
+  mais aucun appel réel n'a pu être fait ici) : sans lui, pas de kill feed
   « Élimination », de tampon HEADSHOT ni de bandeau VICTOIRE ;
 - les sous-titres **Whisper** (téléchargement du modèle bloqué ici) ;
 - les polices Windows (Impact, Bahnschrift) : ici le rendu utilise Inter Display Black.
