@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+# Vidéos et données locales : jamais dans git
+INPUT/*
+OUTPUT/*
+data/*
+assets/music/*
+assets/sfx/*
+!INPUT/.gitkeep
+!OUTPUT/.gitkeep
+!data/.gitkeep
+!assets/music/LISEZMOI.txt
+!assets/sfx/LISEZMOI.txt
+config.json
+*.partial.mp4

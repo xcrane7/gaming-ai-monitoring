@@ -1,0 +1,4 @@
+Dépose ici tes musiques (mp3, wav, flac, ogg, m4a).
+Le monteur en choisit une par vidéo et la baisse automatiquement sous le son du jeu.
+Dossier vide = pas de musique ajoutée.
+N'utilise que des musiques dont tu as les droits (libres de droits, bibliothèque audio YouTube...).
