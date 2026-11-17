@@ -132,7 +132,8 @@ def video_signals(path: str | Path, info: MediaInfo, window: float, fps: float =
                 t = index / fps
                 m, dist, hist = _frame_metrics(prev, frame, prev_hist)
                 w = min(n_windows - 1, int(t / window))
-                if dist >= cut_threshold and t - last_cut >= 1.0 and index > 0:
+                is_cut = dist >= cut_threshold or (dist >= 0.3 and m >= 0.25)
+                if is_cut and t - last_cut >= 1.0 and index > 0:
                     cuts.append(round(t, 3))
                     last_cut = t
                     # un changement de plan n'est pas du « mouvement » de jeu
