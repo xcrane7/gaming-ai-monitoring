@@ -112,9 +112,13 @@ def sync_errors(energy: np.ndarray, times: list[float], hop: float = 0.005) -> l
         if b - a < 8:
             continue
         rise = energy[a:b] - np.array([energy[max(0, k - 4):k].mean() for k in range(a, b)])
-        k = int(np.argmax(rise))
-        if rise[k] < 6:  # aucune attaque nette : impact noyé dans le mix
+        # attaques nettes (pics locaux de montée) ; on garde la plus proche de l'instant
+        # prévu : dans un mix chargé, la plus forte peut être un coup de grosse caisse voisin
+        peaks = [k for k in range(1, rise.size - 1)
+                 if rise[k] >= 6 and rise[k] >= rise[k - 1] and rise[k] >= rise[k + 1]]
+        if not peaks:  # aucune attaque nette : impact noyé dans le mix
             continue
+        k = min(peaks, key=lambda p: abs((a + p) * hop - t))
         errors.append(abs((a + k) * hop - t))
     return errors
 

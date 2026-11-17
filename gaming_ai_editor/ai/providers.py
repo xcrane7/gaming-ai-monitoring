@@ -135,7 +135,9 @@ def provider_status(cfg) -> dict:
                      "API payante autorisée" if cfg["ai"]["allow_paid_api"] else
                      "API payante bloquée (allow_paid_api = false)")
         elif cli and mode in ("auto", "cli"):
-            state = "CLI d'abonnement détecté"
+            state = ("CLI d'abonnement détecté" + (" (analyse des images + textes)"
+                                                    if name == "claude" and conf.get("vision", True)
+                                                    else ""))
         else:
             state = "indisponible — mode local"
         out[name] = {"mode": mode, "cli": cli, "state": state}
@@ -250,26 +252,8 @@ class GeminiAnalyst:
                                arg_prompt=f"Images des moments : {refs} . {SHORT_INSTRUCTION}")
             else:
                 text = self._call_api(self._prompt(analysis, frames, False), frames)
-            verdicts = extract_json(text)
-            applied = 0
-            for v in verdicts if isinstance(verdicts, list) else []:
-                i = v.get("index")
-                if not isinstance(i, int) or not 0 <= i < len(analysis["highlights"]):
-                    continue
-                h = analysis["highlights"][i]
-                label = str(v.get("label", "")).lower()
-                interest = v.get("interest")
-                if label in LABELS:
-                    h["label"] = label
-                if isinstance(interest, (int, float)) and 0 <= interest <= 10:
-                    # le score local est pondéré par l'intérêt jugé par Gemini (x0.2 à x2.0)
-                    h["score"] = round(h["score"] * (0.2 + 0.18 * float(interest)), 4)
-                    h["meta"] = {**h.get("meta", {}), "gemini_interest": interest,
-                                 "comment": str(v.get("comment", ""))[:200]}
-                h["source"] = "gemini"
-                applied += 1
-            analysis["highlights"].sort(key=lambda h: h["score"], reverse=True)
-            analysis["ai"] = {"gemini": route, "moments_qualifiés": applied}
+            applied = apply_verdicts(analysis, extract_json(text), "gemini")
+            analysis["ai"] = {"provider": "gemini", "route": route, "moments_qualifiés": applied}
             self.log(f"Gemini ({route}) : {applied} moments qualifiés.")
         except QuotaExhausted as exc:
             if self.guard.db:
@@ -279,6 +263,97 @@ class GeminiAnalyst:
             self.log(f"Gemini indisponible ({type(exc).__name__}: {str(exc)[:120]}) : "
                      "analyse locale conservée.")
         return analysis
+
+
+def apply_verdicts(analysis: dict, verdicts, provider: str) -> int:
+    """Applique les étiquettes et l'intérêt donnés par une IA. Ignore tout ce qui est invalide."""
+    applied = 0
+    for v in verdicts if isinstance(verdicts, list) else []:
+        if not isinstance(v, dict):
+            continue
+        i = v.get("index")
+        if not isinstance(i, int) or not 0 <= i < len(analysis["highlights"]):
+            continue
+        h = analysis["highlights"][i]
+        label = str(v.get("label", "")).lower()
+        interest = v.get("interest")
+        if label in LABELS:
+            h["label"] = label
+        if isinstance(interest, (int, float)) and 0 <= interest <= 10:
+            # le score local est pondéré par l'intérêt jugé par l'IA (x0.2 à x2.0)
+            h["score"] = round(h["score"] * (0.2 + 0.18 * float(interest)), 4)
+            h["meta"] = {**h.get("meta", {}), "ai_interest": interest,
+                         "comment": str(v.get("comment", ""))[:200]}
+        h["source"] = provider
+        applied += 1
+    analysis["highlights"].sort(key=lambda h: h["score"], reverse=True)
+    return applied
+
+
+class ClaudeAnalyst(GeminiAnalyst):
+    """Même travail que Gemini, fait par Claude via le CLI de ton abonnement (sans clé API).
+
+    Claude ouvre lui-même les images avec son outil de lecture. Tous ses autres outils
+    (commandes, modification de fichiers, web) sont interdits pendant cet appel.
+    """
+
+    def __init__(self, cfg, guard: CostGuard, log=print):
+        super().__init__(cfg, guard, log)
+        self.conf = cfg["ai"]["claude"]
+
+    def available(self) -> bool:
+        return (self.conf["mode"] in ("auto", "cli") and self.conf.get("vision", True)
+                and bool(shutil.which(self.conf["command"])))
+
+    def _prompt(self, analysis: dict, frames: list[tuple[int, Path]], with_refs: bool) -> str:
+        names = ", ".join(path.name for _, path in frames)
+        return (super()._prompt(analysis, frames, False).replace(
+            "Voici des images extraites", "Ouvre et regarde (outil Read) les images extraites")
+            + f"\nFichiers images, dans le dossier courant : {names}.\n"
+            "N'invente rien que l'image ne montre pas : sans élimination visible, ce n'est "
+            "pas un kill.")
+
+    def enrich(self, analysis: dict, work: Path) -> dict:
+        if not self.available() or not analysis.get("highlights"):
+            return analysis
+        if not self.guard.authorize("claude", "qualification des moments forts",
+                                    "subscription_cli"):
+            return analysis
+        try:
+            frames = self._frames(analysis, work)
+            if not frames:
+                return analysis
+            extra = ["--allowedTools", "Read",
+                     "--disallowedTools", "Bash", "Edit", "Write", "WebFetch", "WebSearch"]
+            if self.conf.get("model"):
+                extra += ["--model", self.conf["model"]]
+            text = run_cli(self.conf["command"], self._prompt(analysis, frames, False),
+                           int(self.conf["timeout"]), extra, cwd=work)
+            applied = apply_verdicts(analysis, extract_json(text), "claude")
+            analysis["ai"] = {"provider": "claude", "route": "cli", "moments_qualifiés": applied}
+            self.log(f"Claude (abonnement) : {applied} moments qualifiés.")
+        except Exception as exc:  # jamais bloquant
+            self.log(f"Claude indisponible pour l'analyse ({type(exc).__name__}: "
+                     f"{str(exc)[:120]}) : analyse locale conservée.")
+        return analysis
+
+
+ANALYSTS = {"gemini": GeminiAnalyst, "claude": ClaudeAnalyst}
+
+
+def qualify_moments(cfg, guard: CostGuard, analysis: dict, work: Path, log=print) -> dict:
+    """Essaie les IA dans l'ordre de `ai.vision_order` ; s'arrête à la première qui répond."""
+    for name in cfg["ai"].get("vision_order", ["gemini", "claude"]):
+        cls = ANALYSTS.get(name)
+        if cls is None:
+            continue
+        analyst = cls(cfg, guard, log)
+        if not analyst.available():
+            continue
+        analysis = analyst.enrich(analysis, work / name)
+        if analysis.get("ai"):
+            break
+    return analysis
 
 
 class ClaudeDirector:

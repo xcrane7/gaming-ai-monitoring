@@ -258,6 +258,37 @@ def test_cli_prompt_goes_through_stdin(tmp_path):
     assert out["argv"] == ["-m", "x", "-p", "court"]
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="stubs exécutables POSIX")
+def test_claude_labels_moments_when_gemini_is_unavailable(cfg, orch, media, monkeypatch,
+                                                          tmp_path):
+    """Sans clé Gemini : Claude (abonnement) regarde les images, avec le seul outil Read."""
+    from gaming_ai_editor.ai.providers import qualify_moments
+    from gaming_ai_editor.analysis import analyze_video
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    log = tmp_path / "args.json"
+    reply = json.dumps([{"index": 0, "label": "kill", "interest": 9, "comment": "élimination"}])
+    stub = tmp_path / "claude"
+    stub.write_text(f"#!{sys.executable}\nimport sys, json, os\n"
+                    f"open({str(log)!r}, 'w').write(json.dumps({{'argv': sys.argv[1:], "
+                    "'stdin': sys.stdin.read(), 'files': sorted(os.listdir('.'))}))\n"
+                    f"print({reply!r})\n")
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    cfg.data["ai"]["gemini"]["mode"] = "auto"
+    cfg.data["ai"]["claude"].update({"mode": "auto", "command": str(stub)})
+    analysis = analyze_video(media["square"], cfg["analysis"])
+    first = analysis["highlights"][0]["peak"]
+    out = qualify_moments(cfg, CostGuard(cfg, orch.db), analysis, tmp_path / "ia", lambda m: None)
+    assert out["ai"]["provider"] == "claude"
+    top = out["highlights"][0]
+    assert top["peak"] == first and top["label"] == "kill" and top["source"] == "claude"
+    call = json.loads(log.read_text())
+    assert call["argv"][:2] == ["--allowedTools", "Read"]
+    assert {"Bash", "Edit", "Write"} <= set(call["argv"])  # aucun autre outil autorisé
+    assert "moment_00.jpg" in call["files"] and "moment_00.jpg" in call["stdin"]
+    assert orch.db.one("SELECT cost_class FROM ai_calls")["cost_class"] == "subscription_cli"
+
+
 def test_extract_json():
     assert extract_json('Voici :\n```json\n[{"index": 0}]\n```') == [{"index": 0}]
     assert extract_json('ok {"title": "A"} fin') == {"title": "A"}

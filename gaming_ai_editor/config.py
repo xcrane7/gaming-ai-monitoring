@@ -119,7 +119,9 @@ DEFAULTS: dict[str, Any] = {
         # variable GEMINI_API_KEY ou le fichier gemini_key.txt. Une requête par vidéo.
         "gemini": {"mode": "auto", "command": "gemini", "model": None, "timeout": 240,
                    "free_tier_only": True, "max_requests_per_day": 20},
-        "claude": {"mode": "auto", "command": "claude", "model": None, "timeout": 240},
+        "claude": {"mode": "auto", "command": "claude", "model": None, "timeout": 240,
+                   "vision": True},  # Claude regarde les images si Gemini n'est pas disponible
+        "vision_order": ["gemini", "claude"],  # qui étiquette les moments forts, dans l'ordre
         # mode : "auto" (CLI de l'abonnement si présent) | "cli" | "api" | "off"
     },
     "research": {

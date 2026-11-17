@@ -14,7 +14,7 @@ import traceback
 from pathlib import Path
 
 from . import analysis as analysis_mod
-from .ai.providers import ClaudeDirector, CostGuard, GeminiAnalyst
+from .ai.providers import ClaudeDirector, CostGuard, qualify_moments
 from .config import VIDEO_EXTENSIONS, Config
 from .db import Database
 from .editor import subtitles as subs
@@ -100,12 +100,11 @@ class Orchestrator:
             except Exception as exc:
                 self.log(f"Détecteur de scènes « {detector['name']} » en échec ({exc}) : "
                          "détecteur intégré conservé.", "warn")
-        gemini = GeminiAnalyst(self.cfg, self.guard, self.log)
-        if gemini.available():
-            if job_id:
-                self._stage(job_id, "analyse Gemini", 0.21)
-            result = gemini.enrich(result, self.cfg.work_dir / f"gemini_{video['id']}")
-            shutil.rmtree(self.cfg.work_dir / f"gemini_{video['id']}", ignore_errors=True)
+        work = self.cfg.work_dir / f"ia_{video['id']}"
+        if job_id:
+            self._stage(job_id, "analyse IA des moments forts", 0.21)
+        result = qualify_moments(self.cfg, self.guard, result, work, self.log)
+        shutil.rmtree(work, ignore_errors=True)
         analysis_path = self.cfg.data_dir / "analysis" / f"video_{video['id']}.json"
         analysis_mod.save_analysis(result, analysis_path)
         self.db.execute("DELETE FROM highlights WHERE video_id=?", (video["id"],))

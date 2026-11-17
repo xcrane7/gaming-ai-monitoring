@@ -79,7 +79,8 @@ rendu lourd à la fois, attente si la mémoire manque) et reprend les tâches ap
 
 Le système fonctionne entièrement **sans IA**. L'IA n'apporte qu'un plus :
 
-- **Gemini** qualifie les moments forts (kill, victoire, fail, drôle) à partir d'images clés ;
+- **Gemini ou Claude** regarde une image de chaque moment fort et l'étiquette (kill,
+  headshot, victoire, fail, drôle…) ;
 - **Claude** écrit l'accroche, les mots d'impact, le titre, la description et les hashtags.
 
 Sans Gemini, les notifications disent « Explosion » ou « Impact », jamais « Kill » : ce
@@ -91,7 +92,23 @@ sont utilisés, s'ils sont installés et connectés : cela ne déclenche aucun a
 `"allow_paid_api": true` dans `config.json` et fourni une clé. Chaque appel (autorisé ou
 refusé) est journalisé et visible dans l'onglet *Système* du dashboard.
 
-### Brancher Gemini (clé gratuite Google AI Studio)
+### Sans clé Gemini : Claude fait l'analyse des images
+
+Si Claude Code est installé et connecté à ton abonnement Claude, l'application lui fait
+regarder les images des moments forts quand Gemini n'est pas disponible. Aucune clé, aucun
+frais en plus de ton abonnement ; chaque vidéo consomme un peu de ton quota d'utilisation
+Claude (un appel pour l'analyse, un pour les textes, un pour le titre).
+
+1. Installe Node.js, puis dans PowerShell : `npm install -g @anthropic-ai/claude-code`
+2. Lance `claude` une fois et connecte-toi avec ton compte Claude. Tape `/exit`.
+3. Relance `start.bat`. Onglet *Système* : « Claude : CLI d'abonnement détecté (analyse
+   des images + textes) ».
+
+Pendant cet appel, Claude n'a le droit qu'à un seul outil : lire les images. Commandes,
+modification de fichiers et accès web lui sont interdits. Ordre d'essai réglable :
+`"ai": {"vision_order": ["gemini", "claude"]}`.
+
+### Brancher Gemini (clé gratuite Google AI Studio, facultatif)
 
 Depuis juin 2026, Google refuse la connexion avec un compte personnel dans Gemini CLI
 (message « This client is no longer supported for Gemini Code Assist for individuals »).
@@ -167,7 +184,7 @@ cadrage vertical `crop` / `blur` / `hybrid`, encodeur, musique, sous-titres, che
 
 ```
 pip install pytest
-python -m pytest tests                      57 tests, environ 13 minutes
+python -m pytest tests                      60 tests, environ 11 minutes
 GAE_TEST_NETWORK=1 python -m pytest tests   ajoute le cycle de recherche en ligne
 ```
 
@@ -176,7 +193,7 @@ d'action et les changements de plan, ce qui permet de vérifier objectivement la
 
 ## État des vérifications
 
-Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 57 tests :
+Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 60 tests :
 
 - montage complet d'un vrai gameplay FPS 4K : Short 1080×1920 de 43,5 s, 20 contrôles QA
   réussis, impacts sonores à 1 ms de l'instant prévu, originaux intacts ;
@@ -199,7 +216,8 @@ Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) �
 - **NVENC** sur la RTX 5070 Ti (aucun GPU ici ; seul le repli CPU a été testé) ;
 - les scripts `.bat` et le démarrage automatique Windows ;
 - un **vrai appel à Gemini** avec une clé AI Studio (le format de la requête et la
-  gestion des erreurs sont testés avec un faux serveur, sans vraie clé) : sans clé, pas de kill feed
+  gestion des erreurs sont testés avec un faux serveur, sans vraie clé). L'analyse des
+  images par **Claude**, elle, a été testée pour de vrai sur le gameplay FPS. Sans aucune IA, pas de kill feed
   « Élimination », de tampon HEADSHOT ni de bandeau VICTOIRE ;
 - les sous-titres **Whisper** (téléchargement du modèle bloqué ici) ;
 - les polices Windows (Impact, Bahnschrift) : ici le rendu utilise Inter Display Black.

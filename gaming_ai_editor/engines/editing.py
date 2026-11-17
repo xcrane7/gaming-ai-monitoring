@@ -123,9 +123,9 @@ def style_dna(analyses: list[dict], cfg, fmt: str, key: str) -> dict:
 
 
 def _semantic_label(analysis: dict, t: float) -> str | None:
-    """Étiquette d'IA (Gemini) d'un moment fort proche, s'il y en a une."""
+    """Étiquette d'IA (Gemini ou Claude) d'un moment fort proche, s'il y en a une."""
     for h in analysis.get("highlights", []):
-        if h.get("source") == "gemini" and h["start"] - 1.0 <= t <= h["end"] + 1.0:
+        if h.get("source") in ("gemini", "claude") and h["start"] - 1.0 <= t <= h["end"] + 1.0:
             label = str(h.get("label", ""))
             if label in SEMANTIC:
                 return label
