@@ -281,13 +281,20 @@ def build_plan(fmt: str, analyses: list[dict], cfg, title: str = "") -> EditPlan
         longest.end -= min(excess, longest.duration - 1.0)
 
     # Bornes calées sur un changement de plan proche : les clips démarrent proprement.
+    # Un calage qui raccourcit n'est accepté que si le plan reste au-dessus de la durée
+    # minimale (avec 25 clips, ±1 s chacun suffisait à repasser sous 5 minutes).
     cuts = {a["path"]: a.get("scene_cuts") or [] for a in analyses}
+    spare = _total(chosen) - overhead(len(chosen)) - (min_s + 0.5)
     for seg in chosen:
         for cut in cuts.get(seg.source, []):
             if abs(cut - seg.start) <= 1.0 and cut < seg.peak - 1.0:
-                seg.start = float(cut)
+                loss = float(cut) - seg.start
+                if loss <= max(0.0, spare):
+                    seg.start, spare = float(cut), spare - loss
             elif abs(cut - seg.end) <= 1.0 and cut > seg.peak + 1.0:
-                seg.end = float(cut)
+                loss = seg.end - float(cut)
+                if loss <= max(0.0, spare):
+                    seg.end, spare = float(cut), spare - loss
     while chosen and _total(chosen) - overhead(len(chosen)) > max_s:
         longest = max(chosen, key=lambda s: s.duration)
         longest.end -= min(_total(chosen) - overhead(len(chosen)) - max_s,

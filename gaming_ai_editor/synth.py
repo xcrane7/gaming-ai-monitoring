@@ -56,7 +56,8 @@ def make_gameplay(path: str | Path, duration: float = 90.0, width: int = 1280,
     labels = "".join(f"[s{i}]" for i in range(count))
     enable = "+".join(f"between(t,{a},{b})" for a, b in bursts) or "0"
     graph = ";".join(parts) + f";{labels}concat=n={count}:v=1:a=0[cat];"
-    graph += f"[cat]noise=alls={noise}:allf=t:enable='{enable}'"
+    # graines fixes : la même vidéo de test à chaque session (vérité terrain reproductible)
+    graph += f"[cat]noise=alls={noise}:allf=t:all_seed=1234:enable='{enable}'"
     for k, (a, b, text, zone) in enumerate(texts or []):
         from .engines.graphics import DISPLAY_FONTS, font_path
 
@@ -68,7 +69,7 @@ def make_gameplay(path: str | Path, duration: float = 90.0, width: int = 1280,
                   f"borderw=3:bordercolor=black:{pos}:enable='between(t,{a},{b})'")
     graph += "[v]"
     args = ["-f", "lavfi", "-i", f"sine=f=180:r=48000:d={duration}",
-            "-f", "lavfi", "-i", f"anoisesrc=r=48000:c=pink:a=0.9:d={duration}"]
+            "-f", "lavfi", "-i", f"anoisesrc=r=48000:c=pink:a=0.9:d={duration}:seed=42"]
     if audio:
         hush = "+".join(f"between(t,{a},{b})" for a, b in quiet or []) or "0"
         speak = "+".join(f"between(t,{a},{b})" for a, b in voices or []) or "0"
@@ -104,7 +105,7 @@ def make_sfx(sfx_dir: str | Path) -> list[Path]:
     whoosh = sfx_dir / "whoosh.wav"
     impact = sfx_dir / "impact.wav"
     run_ffmpeg(["-f", "lavfi", "-i",
-                "anoisesrc=r=48000:c=white:a=0.8:d=0.45,highpass=f=500,lowpass=f=5000,"
+                "anoisesrc=r=48000:c=white:a=0.8:d=0.45:seed=7,highpass=f=500,lowpass=f=5000,"
                 "afade=t=in:d=0.28:curve=qsin,afade=t=out:st=0.3:d=0.15,"
                 "aformat=channel_layouts=stereo",
                 "-c:a", "pcm_s16le", str(whoosh)])

@@ -239,3 +239,20 @@ def test_broken_input_marks_job_failed(cfg, orch):
     job = orch.db.one("SELECT * FROM jobs ORDER BY id DESC LIMIT 1")
     assert job["status"] == "failed" and job["error"]
     assert bad.exists(), "même un fichier illisible n'est jamais supprimé"
+
+
+def test_long_plan_stays_above_minimum_after_snapping_to_scene_cuts(cfg):
+    """Caler les bords des clips sur les changements de plan raccourcit chaque clip :
+    avec beaucoup de clips, le plan ne doit pas repasser sous la durée minimale."""
+    cfg.data["long"]["bounds"] = "fixed"
+    highlights, cuts = [], []
+    for k in range(16):
+        peak = 20.0 + 40 * k
+        highlights.append({"start": peak - 0.5, "end": peak + 0.5, "peak": peak,
+                           "score": 1.0 - k / 100, "label": "action"})
+        cuts += [peak - 10.5 + 0.9, peak + 8.5 - 0.9]  # juste à l'intérieur de chaque clip
+    analysis = {"path": "session.mp4", "duration": 660.0, "fps": 30, "width": 1280,
+                "height": 720, "highlights": highlights, "scene_cuts": cuts}
+    plan = build_plan("long", [analysis], cfg)
+    assert len(plan.segments) == 16
+    assert plan.duration >= 300, plan.duration
