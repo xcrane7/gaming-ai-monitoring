@@ -89,7 +89,8 @@ class Orchestrator:
         accel = self.skills.active("decode_accel")
         if accel:
             acfg["hwaccel"] = accel["params"].get("hwaccel", acfg.get("hwaccel", "auto"))
-        result = analysis_mod.analyze_video(path, acfg, info, progress)
+        result = analysis_mod.analyze_video(path, acfg, info, progress,
+                                            games=self.cfg.get("games") or {})
         detector = self.skills.active("scene_detector")
         if detector and detector["params"].get("impl") != "builtin":
             from .research.sandbox import run_scene_detector

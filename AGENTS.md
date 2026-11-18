@@ -29,7 +29,7 @@ Lis d'abord `README.md` puis `docs/ENGINES.md` (architecture des dix moteurs).
 3. **Ne rien supprimer qui fonctionne.** Le mode simple (`"style": {"enabled": false}`) et
    le second essai « prudent » doivent continuer à marcher.
 4. **Ne jamais déclarer une fonctionnalité terminée sans l'avoir testée** :
-   `python -m pytest tests` doit passer (environ 15 minutes ; un fichier précis :
+   `python -m pytest tests` doit passer (environ 17 minutes ; un fichier précis :
    `python -m pytest tests/test_engines.py`).
 5. Ajouter un test pour chaque nouvelle fonctionnalité, sur des vidéos générées par
    `gaming_ai_editor/synth.py` plutôt que sur des fichiers externes.
@@ -39,8 +39,9 @@ Lis d'abord `README.md` puis `docs/ENGINES.md` (architecture des dix moteurs).
 7. Code et messages en français, comme le reste du projet.
 8. Ne jamais écrire de clé API dans le code, les journaux ou git (`gemini_key.txt` est
    ignoré par git).
-9. Sans étiquette de Gemini, ne jamais afficher « kill », « headshot » ou « victoire » :
-   le son et l'image seuls ne permettent pas de l'affirmer.
+9. Ne jamais afficher « kill », « headshot » ou « victoire » sans preuve : étiquette de
+   l'IA (Gemini ou Claude) ou texte lu à l'écran (OCR). Le son et le mouvement seuls ne
+   permettent pas de l'affirmer.
 
 ## Plusieurs agents sur le même dépôt
 

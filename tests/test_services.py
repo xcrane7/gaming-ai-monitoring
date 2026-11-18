@@ -285,7 +285,7 @@ def test_claude_labels_moments_when_gemini_is_unavailable(cfg, orch, media, monk
     call = json.loads(log.read_text())
     assert call["argv"][:2] == ["--allowedTools", "Read"]
     assert {"Bash", "Edit", "Write"} <= set(call["argv"])  # aucun autre outil autorisé
-    assert "moment_00.jpg" in call["files"] and "moment_00.jpg" in call["stdin"]
+    assert "moment_00_1.jpg" in call["files"] and "moment_00_1.jpg" in call["stdin"]
     assert orch.db.one("SELECT cost_class FROM ai_calls")["cost_class"] == "subscription_cli"
 
 
@@ -353,7 +353,8 @@ def test_free_gemini_key_labels_moments(cfg, orch, media, monkeypatch, tmp_path)
     assert top["peak"] == first and top["label"] == "headshot" and top["source"] == "gemini"
     body = json.loads(sent[-1].data)
     images = [p for p in body["contents"][0]["parts"] if "inline_data" in p]
-    assert len(images) == min(10, len(analysis["highlights"])) and len(sent) == 2
+    moments = min(12, len([h for h in analysis["highlights"] if h.get("label") != "menu"]))
+    assert moments <= len(images) <= 3 * moments and len(sent) == 2
     assert sent[-1].headers["X-goog-api-key"] == "cle-gratuite"
     row = orch.db.one("SELECT * FROM ai_calls")
     assert row["cost_class"] == "free_tier_api" and row["allowed"] == 1

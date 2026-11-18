@@ -34,8 +34,15 @@ def make_gameplay(path: str | Path, duration: float = 90.0, width: int = 1280,
                   height: int = 720, fps: int = 30,
                   bursts: list[tuple[float, float]] | None = None,
                   cut_every: float | None = 15.0, audio: bool = True,
-                  noise: int = 70) -> dict:
-    """Crée une vidéo de test. Retourne la vérité terrain {bursts, cuts}."""
+                  noise: int = 70, voices: list[tuple[float, float]] | None = None,
+                  quiet: list[tuple[float, float]] | None = None,
+                  texts: list[tuple[float, float, str, str]] | None = None) -> dict:
+    """Crée une vidéo de test. Retourne la vérité terrain {bursts, cuts, voices, quiet, texts}.
+
+    - `voices` : passages de « cri » (son harmonique dans la bande de la voix) ;
+    - `quiet` : passages de quasi-silence (le fond sonore est coupé) ;
+    - `texts` : textes à l'écran (début, fin, texte, zone) avec zone "center" ou "topright".
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     bursts = default_bursts(duration) if bursts is None else bursts
@@ -49,12 +56,28 @@ def make_gameplay(path: str | Path, duration: float = 90.0, width: int = 1280,
     labels = "".join(f"[s{i}]" for i in range(count))
     enable = "+".join(f"between(t,{a},{b})" for a, b in bursts) or "0"
     graph = ";".join(parts) + f";{labels}concat=n={count}:v=1:a=0[cat];"
-    graph += f"[cat]noise=alls={noise}:allf=t:enable='{enable}'[v]"
+    graph += f"[cat]noise=alls={noise}:allf=t:enable='{enable}'"
+    for k, (a, b, text, zone) in enumerate(texts or []):
+        from .engines.graphics import DISPLAY_FONTS, font_path
+
+        font = next((font_path(f) for f in DISPLAY_FONTS if font_path(f)), None)
+        pos = ("x=(w-tw)/2:y=h*0.4" if zone == "center" else "x=w-tw-w*0.03:y=h*0.06")
+        size = "h/7" if zone == "center" else "h/18"
+        ff = f":fontfile='{font}'" if font else ""
+        graph += (f",drawtext=text='{text}'{ff}:fontsize={size}:fontcolor=yellow:"
+                  f"borderw=3:bordercolor=black:{pos}:enable='between(t,{a},{b})'")
+    graph += "[v]"
     args = ["-f", "lavfi", "-i", f"sine=f=180:r=48000:d={duration}",
             "-f", "lavfi", "-i", f"anoisesrc=r=48000:c=pink:a=0.9:d={duration}"]
     if audio:
-        graph += (f";[0:a]volume=0.04[bg];[1:a]volume='if({enable},1,0)':eval=frame[burst];"
-                  "[bg][burst]amix=inputs=2:normalize=0,aformat=channel_layouts=stereo[a]")
+        hush = "+".join(f"between(t,{a},{b})" for a, b in quiet or []) or "0"
+        speak = "+".join(f"between(t,{a},{b})" for a, b in voices or []) or "0"
+        harmonics = "+".join(f"sin({k}*(2*PI*210*t+0.6*sin(2*PI*5*t)))/{k}" for k in range(1, 13))
+        args += ["-f", "lavfi", "-i", f"aevalsrc='{harmonics}':s=48000:d={duration}"]
+        graph += (f";[0:a]volume='if({hush},0.0005,0.04)':eval=frame[bg];"
+                  f"[1:a]volume='if({enable},1,0)':eval=frame[burst];"
+                  f"[2:a]highpass=f=300,lowpass=f=3400,volume='if({speak},0.5,0)':eval=frame[voice];"
+                  "[bg][burst][voice]amix=inputs=3:normalize=0,aformat=channel_layouts=stereo[a]")
     args += ["-filter_complex", graph, "-map", "[v]"]
     if audio:
         args += ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]
@@ -62,7 +85,8 @@ def make_gameplay(path: str | Path, duration: float = 90.0, width: int = 1280,
              "-t", f"{duration}", str(path)]
     run_ffmpeg(args)
     cuts = [round(seg * i, 3) for i in range(1, count)]
-    return {"bursts": bursts, "cuts": cuts, "duration": duration}
+    return {"bursts": bursts, "cuts": cuts, "duration": duration, "voices": voices or [],
+            "quiet": quiet or [], "texts": texts or []}
 
 
 def make_tone(path: str | Path, duration: float = 30.0, freq: int = 330) -> None:

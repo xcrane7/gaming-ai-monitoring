@@ -39,6 +39,10 @@ DEFAULTS: dict[str, Any] = {
         "peak_percentile": 80,
         "peak_min_distance": 6.0,
         "max_highlights": 120,
+        "rerank": True,  # réaction, silence puis pic, séries, OCR, doublons, variété
+        "rerank_top": 20,  # candidats examinés en détail (images, OCR)
+        "ocr": "auto",  # "auto" (si RapidOCR est installé) | "off"
+        "ocr_top": 10,  # candidats dont on lit le texte à l'écran (2 images chacun)
     },
     "short": {
         "enabled": True,
@@ -131,6 +135,8 @@ DEFAULTS: dict[str, Any] = {
         "claude": {"mode": "auto", "command": "claude", "model": None, "timeout": 240,
                    "vision": True},  # Claude regarde les images si Gemini n'est pas disponible
         "vision_order": ["gemini", "claude"],  # qui étiquette les moments forts, dans l'ordre
+        "vision_top": 12,  # nombre de moments montrés à l'IA
+        "frames_per_moment": 3,  # début, pic, fin : l'IA juge l'action, pas une image figée
         # mode : "auto" (CLI de l'abonnement si présent) | "cli" | "api" | "off"
     },
     "research": {
@@ -158,6 +164,10 @@ DEFAULTS: dict[str, Any] = {
         "loudness_tolerance": 3.0,
         "duration_tolerance": 1.0,
     },
+    # Profils de jeux pour la lecture du texte à l'écran (facultatif). Exemple :
+    # "fortnite": {"match": ["fortnite"], "regions": {"kill_feed": [0.0, 0.55, 0.35, 0.8]},
+    #              "keywords": {"kill": ["eliminated"], "victoire": ["victory royale"]}}
+    "games": {},
     "dashboard": {"host": "127.0.0.1", "port": 8765},
 }
 

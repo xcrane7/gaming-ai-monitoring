@@ -17,7 +17,8 @@ __all__ = ["analyze_video", "Highlight", "Signals", "HAVE_CV2"]
 
 def analyze_video(path: str | Path, cfg: dict, info: MediaInfo | None = None,
                   on_progress: Callable[[float], None] | None = None,
-                  cancel_check: Callable[[], bool] | None = None) -> dict:
+                  cancel_check: Callable[[], bool] | None = None,
+                  games: dict | None = None) -> dict:
     """Analyse complète d'un fichier ; ne modifie jamais la source (lecture seule)."""
     started = time.time()
     info = info or probe(path)
@@ -32,7 +33,7 @@ def analyze_video(path: str | Path, cfg: dict, info: MediaInfo | None = None,
             h.score = round(h.score * 0.1, 4)
             h.label = "menu"
     highlights.sort(key=lambda h: h.score, reverse=True)
-    return {
+    result = {
         "path": str(path),
         "duration": info.duration,
         "width": info.width, "height": info.height, "fps": info.fps,
@@ -45,8 +46,13 @@ def analyze_video(path: str | Path, cfg: dict, info: MediaInfo | None = None,
         "motion": [round(float(v), 5) for v in signals.motion],
         "highlights": [h.to_dict() for h in highlights],
         **intel,
-        "analysis_seconds": round(time.time() - started, 2),
     }
+    if cfg.get("rerank", True):
+        from .rerank import rerank
+
+        result["rerank"] = rerank(path, result, cfg, games)
+    result["analysis_seconds"] = round(time.time() - started, 2)
+    return result
 
 
 def save_analysis(analysis: dict, path: Path) -> None:

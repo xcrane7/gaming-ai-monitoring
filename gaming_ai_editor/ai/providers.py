@@ -23,7 +23,11 @@ from pathlib import Path
 from ..db import Database
 from ..ffutil import _popen_kwargs, run_ffmpeg
 
-LABELS = ["kill", "headshot", "victoire", "fail", "drôle", "action", "rien"]
+LABELS = ["kill", "headshot", "clutch", "victoire", "fail", "drôle", "cinematic", "action",
+          "rien"]
+SYNONYMS = {"funny": "drôle", "drole": "drôle", "win": "victoire", "victory": "victoire",
+            "boring": "rien", "cinématique": "cinematic", "cinematique": "cinematic",
+            "elimination": "kill", "élimination": "kill"}
 
 
 class CostGuard:
@@ -169,31 +173,54 @@ class GeminiAnalyst:
         return self._route() is not None
 
     def _frames(self, analysis: dict, work: Path) -> list[tuple[int, Path]]:
+        """Images de chaque moment candidat : début, pic et fin (l'action, pas une image figée).
+
+        Retourne [(index du moment, image)], plusieurs images par moment.
+        """
+        from ..analysis.rerank import moment_times
+
         work.mkdir(parents=True, exist_ok=True)
+        ai = self.cfg["ai"]
+        top = int(ai.get("vision_top", self.MAX_MOMENTS))
+        per = max(1, int(ai.get("frames_per_moment", 3)))
         frames = []
-        for i, h in enumerate(analysis["highlights"][: self.MAX_MOMENTS]):
-            out = work / f"moment_{i:02d}.jpg"
-            try:
-                run_ffmpeg(["-ss", f"{h['peak']:.2f}", "-i", analysis["path"], "-frames:v", "1",
-                            "-vf", "scale=640:-2", "-q:v", "5", str(out)])
-                frames.append((i, out))
-            except Exception:
-                continue
+        chosen = [i for i, h in enumerate(analysis["highlights"]) if h.get("label") != "menu"]
+        for i in chosen[:top]:
+            h = analysis["highlights"][i]
+            times = moment_times(h, float(analysis.get("duration", h["end"] + 1)))
+            if per == 1 or len(times) == 1:
+                times = [h["peak"]]
+            for k, t in enumerate(times[:per]):
+                out = work / f"moment_{i:02d}_{k + 1}.jpg"
+                try:
+                    run_ffmpeg(["-ss", f"{t:.2f}", "-i", analysis["path"], "-frames:v", "1",
+                                "-vf", "scale=640:-2", "-q:v", "5", str(out)])
+                    frames.append((i, out))
+                except Exception:
+                    continue
         return frames
 
     def _prompt(self, analysis: dict, frames: list[tuple[int, Path]], with_refs: bool) -> str:
         lines = [
-            "Tu es l'analyste d'un monteur vidéo gaming. Voici des images extraites de moments "
-            "forts détectés dans un gameplay. Pour chaque moment, donne une étiquette parmi "
-            f"{LABELS} et un intérêt de 0 à 10 pour un montage.",
+            "Tu es l'analyste d'un monteur vidéo gaming. Pour chaque moment fort candidat, tu "
+            "as plusieurs images dans l'ordre (début, pic, fin). Juge l'ACTION qui se déroule, "
+            f"donne une étiquette parmi {LABELS} et un intérêt de 0 à 10 pour un Short.",
+            "kill = élimination visible ; clutch = retournement / situation sauvée de justesse ; "
+            "cinematic = cinématique non jouée ; rien = sans intérêt. N'invente rien que les "
+            "images ne montrent pas.",
             "Réponds UNIQUEMENT avec un tableau JSON : "
-            '[{"index": 0, "label": "kill", "interest": 8, "comment": "..."}].',
+            '[{"index": 0, "label": "kill", "interest": 8, "why": "raison courte"}].',
             "Moments :",
         ]
+        by_moment: dict[int, list[Path]] = {}
         for i, path in frames:
+            by_moment.setdefault(i, []).append(path)
+        for i, paths in by_moment.items():
             h = analysis["highlights"][i]
-            ref = f" image: @{path.name}" if with_refs else ""
-            lines.append(f"- index {i} : t={h['peak']:.1f}s, score local {h['score']:.2f}{ref}")
+            refs = " ".join((f"@{p.name}" if with_refs else p.name) for p in paths)
+            hint = h.get("meta", {}).get("why")
+            lines.append(f"- index {i} : t={h['peak']:.1f}s, images {refs}"
+                         + (f" (indices locaux : {hint})" if hint else ""))
         return "\n".join(lines)
 
     def _call_api(self, prompt: str, frames: list[tuple[int, Path]]) -> str:
@@ -275,15 +302,17 @@ def apply_verdicts(analysis: dict, verdicts, provider: str) -> int:
         if not isinstance(i, int) or not 0 <= i < len(analysis["highlights"]):
             continue
         h = analysis["highlights"][i]
-        label = str(v.get("label", "")).lower()
+        label = str(v.get("label", "")).strip().lower()
+        label = SYNONYMS.get(label, label)
         interest = v.get("interest")
         if label in LABELS:
             h["label"] = label
         if isinstance(interest, (int, float)) and 0 <= interest <= 10:
-            # le score local est pondéré par l'intérêt jugé par l'IA (x0.2 à x2.0)
-            h["score"] = round(h["score"] * (0.2 + 0.18 * float(interest)), 4)
-            h["meta"] = {**h.get("meta", {}), "ai_interest": interest,
-                         "comment": str(v.get("comment", ""))[:200]}
+            # score = base des signaux × (0,5 + intérêt / 10) : de ×0,5 à ×1,5
+            h["score"] = round(h["score"] * (0.5 + float(interest) / 10), 4)
+            why = str(v.get("why") or v.get("comment") or "")[:200]
+            h["meta"] = {**h.get("meta", {}), "ai_interest": interest, "ai_why": why,
+                         "comment": why}
         h["source"] = provider
         applied += 1
     analysis["highlights"].sort(key=lambda h: h["score"], reverse=True)
@@ -308,7 +337,7 @@ class ClaudeAnalyst(GeminiAnalyst):
     def _prompt(self, analysis: dict, frames: list[tuple[int, Path]], with_refs: bool) -> str:
         names = ", ".join(path.name for _, path in frames)
         return (super()._prompt(analysis, frames, False).replace(
-            "Voici des images extraites", "Ouvre et regarde (outil Read) les images extraites")
+            "tu as plusieurs images", "ouvre et regarde (outil Read) les images")
             + f"\nFichiers images, dans le dossier courant : {names}.\n"
             "N'invente rien que l'image ne montre pas : sans élimination visible, ce n'est "
             "pas un kill.")

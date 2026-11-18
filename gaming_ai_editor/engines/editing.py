@@ -53,16 +53,19 @@ WORDS = {
     "victoire": ["VICTOIRE", "GG"],
     "fail": ["OUPS", "AÏE", "RATÉ"],
     "drôle": ["MDR", "QUOI ?!", "N'IMPORTE QUOI"],
+    "clutch": ["CLUTCH", "SAUVÉ", "IMPOSSIBLE"],
+    "reaction": ["LA RÉACTION", "IL CRIE", "QUOI ?!"],
+    "surprise": ["SURPRISE", "D'UN COUP", "PERSONNE S'Y ATTENDAIT"],
 }
 NOTIFY = {
     "explosion": ("Explosion", "bolt"), "impact": ("Impact", "crosshair"),
     "shot": ("Tir précis", "crosshair"), "burst": ("Rafale", "flame"),
     "kill": ("Élimination", "skull"), "headshot": ("Headshot", "crosshair"),
-    "rush": ("Rush", "bolt"),
+    "rush": ("Rush", "bolt"), "clutch": ("Clutch", "flame"),
 }
 HOOKS = ["Attends la fin", "Regarde bien ça", "Personne ne s'attendait à ça",
          "Ça part trop loin", "Le meilleur moment de la partie"]
-SEMANTIC = {"kill", "headshot", "victoire", "fail", "drôle"}
+SEMANTIC = {"kill", "headshot", "clutch", "victoire", "fail", "drôle"}
 
 
 def seed_of(*parts) -> int:
@@ -123,9 +126,9 @@ def style_dna(analyses: list[dict], cfg, fmt: str, key: str) -> dict:
 
 
 def _semantic_label(analysis: dict, t: float) -> str | None:
-    """Étiquette d'IA (Gemini ou Claude) d'un moment fort proche, s'il y en a une."""
+    """Étiquette fiable d'un moment proche : IA (Gemini, Claude) ou texte lu à l'écran (OCR)."""
     for h in analysis.get("highlights", []):
-        if h.get("source") in ("gemini", "claude") and h["start"] - 1.0 <= t <= h["end"] + 1.0:
+        if h.get("source") in ("gemini", "claude", "ocr") and h["start"] - 1.0 <= t <= h["end"] + 1.0:
             label = str(h.get("label", ""))
             if label in SEMANTIC:
                 return label
@@ -172,8 +175,14 @@ class Director:
                 ev = dict(e)
                 ev["label"] = _semantic_label(a, e["t"])
                 chosen.append(ev)
+            peak_label = _semantic_label(a, seg.peak) if seg.peak else None
             if not chosen and seg.peak and seg.start + 0.5 < seg.peak < seg.end - 0.5:
-                chosen.append({"t": seg.peak, "kind": "impact", "strength": 0.4, "label": None})
+                chosen.append({"t": seg.peak, "kind": "impact", "strength": 0.4,
+                               "label": peak_label})
+            elif peak_label and chosen and not any(c.get("label") for c in chosen):
+                # l'IA ou l'OCR a reconnu le moment (ex. une chute silencieuse = fail) mais aucun
+                # son ne l'a marqué : l'étiquette va à l'événement le plus proche du pic
+                min(chosen, key=lambda c: abs(c["t"] - seg.peak))["label"] = peak_label
             chosen.sort(key=lambda e: e["t"])
             last_heavy = -10.0
             for ev in chosen:
@@ -197,6 +206,10 @@ class Director:
                     fx += ["punch_soft", "sfx_impact"]
                 elif kind == "rush":
                     fx += ["motion_blur", "sfx_whoosh"]
+                elif kind == "surprise":  # silence puis pic : on sursaute avec le joueur
+                    fx += ["punch", "flash", "sfx_impact"] + (["shake"] if heavy_ok else [])
+                elif kind == "reaction":  # le joueur réagit : on souligne sans écraser sa voix
+                    fx += ["punch_soft"]
                 if {"shake", "glitch", "distortion"} & set(fx):
                     last_heavy = ev["t"]
                 label = ev.get("label")
@@ -291,7 +304,7 @@ class Director:
             segments = [s for s in segments if s.role == "climax"]
         for seg in segments:
             for ev in seg.events:
-                if ev["kind"] in ("explosion", "impact", "shot") and \
+                if ev["kind"] in ("explosion", "impact", "shot", "surprise") and \
                         ev["t"] - seg.start >= 1.2 and seg.end - ev["t"] >= 1.2:
                     cands.append((ev.get("strength", 0) + (0.5 if ev.get("label") else 0), seg, ev))
         cands.sort(key=lambda c: c[0], reverse=True)

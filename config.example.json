@@ -46,7 +46,9 @@
     "vision_order": [
       "gemini",
       "claude"
-    ]
+    ],
+    "vision_top": 12,
+    "frames_per_moment": 3
   },
   "research": {
     "enabled": true,
@@ -58,6 +60,42 @@
     "short.bounds / long.bounds": "adaptive (suit l'action) | fixed (pre_roll / post_roll)",
     "short.loop_ending": "true : fin coupée net pour la relecture TikTok (pas de bouton d'abonnement)",
     "subtitles.style": "words (mot à mot animé) | classic (sous-titres ASS)",
-    "ai.vision_order": "qui étiquette les moments forts : gemini (clé gratuite) puis claude (abonnement)"
+    "ai.vision_order": "qui étiquette les moments forts : gemini (clé gratuite) puis claude (abonnement)",
+    "games": "zones (fractions de l'image) et mots-clés du texte à lire à l'écran, par jeu ; « match » = morceau du nom de fichier"
+  },
+  "analysis": {
+    "rerank": true,
+    "ocr": "auto",
+    "rerank_top": 20,
+    "ocr_top": 10
+  },
+  "games": {
+    "exemple_fortnite": {
+      "match": [
+        "fortnite"
+      ],
+      "regions": {
+        "kill_feed": [
+          0.0,
+          0.55,
+          0.35,
+          0.8
+        ],
+        "centre": [
+          0.1,
+          0.25,
+          0.9,
+          0.75
+        ]
+      },
+      "keywords": {
+        "kill": [
+          "eliminated"
+        ],
+        "victoire": [
+          "victory royale"
+        ]
+      }
+    }
   }
 }

@@ -64,7 +64,10 @@ def audio_signals(path: str | Path, info: MediaInfo, window: float, rate: int = 
     hop = int(rate * HOP_SECONDS)
     fine_energy: list[np.ndarray] = []
     fine_bass: list[np.ndarray] = []
+    fine_voice: list[np.ndarray] = []
+    fine_flat: list[np.ndarray] = []
     bass_bin = max(1, int(200 * hop / rate))  # bins FFT sous 200 Hz
+    voice_lo, voice_hi = int(300 * hop / rate), int(3400 * hop / rate) + 1  # bande de la voix
     assert proc.stdout is not None
     try:
         while True:
@@ -83,6 +86,11 @@ def audio_signals(path: str | Path, info: MediaInfo, window: float, rate: int = 
                 spec = np.abs(np.fft.rfft(frames * np.hanning(hop), axis=1)) ** 2
                 total = spec.sum(axis=1) + 1e-12
                 fine_bass.append(spec[:, 1:bass_bin + 1].sum(axis=1) / total)
+                # voix : énergie dans 300-3400 Hz et harmonicité (spectre « en peigne »,
+                # peu plat), pour distinguer un cri d'un bruit large bande (explosion)
+                band = spec[:, voice_lo:voice_hi] + 1e-12
+                fine_voice.append(band.sum(axis=1) / total)
+                fine_flat.append(np.exp(np.log(band).mean(axis=1)) / band.mean(axis=1))
             if cancel_check and cancel_check():
                 proc.kill()
                 break
@@ -96,6 +104,8 @@ def audio_signals(path: str | Path, info: MediaInfo, window: float, rate: int = 
     if extras is not None and fine_energy:
         extras["fine_energy"] = np.concatenate(fine_energy)
         extras["fine_bass"] = np.concatenate(fine_bass)
+        extras["fine_voice"] = np.concatenate(fine_voice)
+        extras["fine_flat"] = np.concatenate(fine_flat)
         extras["hop"] = HOP_SECONDS
     return rms_db, flux
 

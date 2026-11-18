@@ -33,8 +33,10 @@ Musique : dépose tes fichiers dans `assets\music\` (dossier vide = pas de musiq
 
 1. **Détection** — un fichier n'est pris que lorsque sa taille est stable (un enregistrement
    OBS en cours n'est pas traité à moitié).
-2. **Compréhension** — explosions, tirs, impacts, rafales, flashs et rushs situés à 20 ms
-   près ; menus et écrans de pause écartés ; suivi de la position de l'action ; couleurs.
+2. **Compréhension** — explosions, tirs, impacts, rafales, flashs, rushs, réactions du joueur
+   (cri) et « silence puis pic » situés à 20 ms près ; séries d'actions regroupées ; texte à
+   l'écran lu (kill feed, VICTORY, WASTED…) ; doublons visuels pénalisés ; menus et écrans de
+   pause écartés ; puis l'IA regarde 3 images (début, pic, fin) des meilleurs moments.
 3. **Sélection** — les meilleurs passages pour la durée du format. Short : le moment le
    plus fort en accroche. YouTube : ordre chronologique.
 4. **Réalisation** — une identité visuelle propre à chaque vidéo, puis pour chaque
@@ -184,7 +186,7 @@ cadrage vertical `crop` / `blur` / `hybrid`, encodeur, musique, sous-titres, che
 
 ```
 pip install pytest
-python -m pytest tests                      69 tests, environ 15 minutes
+python -m pytest tests                      79 tests, environ 17 minutes
 GAE_TEST_NETWORK=1 python -m pytest tests   ajoute le cycle de recherche en ligne
 ```
 
@@ -193,7 +195,7 @@ d'action et les changements de plan, ce qui permet de vérifier objectivement la
 
 ## État des vérifications
 
-Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 69 tests :
+Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 79 tests :
 
 - montage complet d'un vrai gameplay FPS 4K : Short 1080×1920 de 43,5 s, 20 contrôles QA
   réussis, impacts sonores à 1 ms de l'instant prévu, originaux intacts ;
@@ -211,7 +213,16 @@ Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) �
 - toutes les vérifications de la version précédente (formats, QA, surveillance, dashboard,
   garde-fou des coûts, repli CPU).
 
+- lecture du texte à l'écran (OCR, RapidOCR) : « ELIMINATED » et « VICTORY » retrouvés sur des
+  vidéos de test, aucun faux kill sur des mots proches (« limited », « estimated ») ; réactions
+  vocales et « silence puis pic » détectés sur vidéos de test, aucun faux positif sur le
+  gameplay FPS réel ;
+
 **Pas encore vérifié — à contrôler sur ton PC :**
+
+- l'OCR et les réactions sur **tes** jeux : les zones du kill feed varient d'un jeu à l'autre
+  (réglables dans `config.json`, clé `games`) et sans piste micro séparée, une musique de jeu
+  très vocale peut passer pour une réaction ;
 
 - **NVENC** sur la RTX 5070 Ti (aucun GPU ici ; seul le repli CPU a été testé) ;
 - les scripts `.bat` et le démarrage automatique Windows ;

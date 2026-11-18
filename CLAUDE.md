@@ -11,7 +11,7 @@ Règles communes à tous les agents : `AGENTS.md`. Architecture : `docs/ENGINES.
 
 | Problème | État |
 |---|---|
-| Moments forts choisis par son + mouvement seulement | **Amélioré** : événements typés à 20 ms, menus exclus, vision IA (Gemini ou Claude) qui étiquette chaque moment. Reste à faire : lecture du kill feed. |
+| Moments forts choisis par son + mouvement seulement | **Amélioré** : événements typés à 20 ms (dont réactions du joueur et silence puis pic), séries, texte à l'écran (OCR : kill feed, VICTORY, WASTED…), doublons et répétitions pénalisés, menus exclus, vision IA sur 3 images par moment. Détails : skill `highlight-intelligence`. |
 | Découpe identique (`pre_roll` / `post_roll` fixes) | **Corrigé** : `_adaptive_bounds` (début dans le calme qui précède, fin quand l'action retombe, calée sur les changements de plan). `bounds: "fixed"` garde l'ancien comportement. |
 | Transitions en rotation fixe | **Corrigé** (montage stylé) : coupes sèches pendant la montée, transitions visibles entre séquences, jamais deux fois la même. `XFADE_STYLES` ne sert plus qu'au mode simple. |
 | Aucun texte, sous-titres taille 16 | **Corrigé** : accroche animée, mots d'impact, sous-titres mot à mot (élément `captions`). |
@@ -24,8 +24,9 @@ checklist `edit-critic` passée de 4/6 à 6/6 ; climax de 21 % à 84 % de la vid
 de 18 s remplacé par un cold open de 1,8 s ; clip sans action retiré ; 1 image surexposée au lieu
 de 3. Ne pas régresser.
 
-Pistes restantes (non faites) : lecture du kill feed par jeu, plusieurs images par moment pour
-la vision IA, vérifier sur de vrais gameplays de l'utilisateur (un seul gameplay réel testé).
+Pistes restantes (non faites) : profils de jeux réels (zones et mots-clés), piste micro séparée,
+rires ; vérifier sur de vrais gameplays de l'utilisateur (un seul gameplay réel testé, sans voix
+ni texte de jeu : l'OCR et les réactions ne sont validés que sur vidéos de test).
 
 ## Règles de travail
 - Ne jamais modifier/déplacer/supprimer les originaux de INPUT/ (la QA le vérifie par checksum).

@@ -10,6 +10,9 @@ luminosité, mouvement, position de l'action), il produit :
     burst     rafale d'au moins 3 transitoires rapprochés (combo) ;
     flash     éclair visuel sans son marquant ;
     rush      mouvement intense et soutenu ;
+    reaction  réaction du joueur (cri, exclamation, rire : voix forte et harmonique) ;
+    surprise  silence puis pic brutal (jump scare, clutch) ;
+- des **séries** : au moins 3 moments d'action à moins de 8 s d'écart ;
 - une **piste de suivi** de l'action (position horizontale lissée) pour le recadrage vertical ;
 - un **profil colorimétrique** (teinte dominante, saturation, luminosité) ;
 - le **rythme** de la vidéo (événements par minute, mouvement moyen).
@@ -30,7 +33,7 @@ import numpy as np
 
 from ..ffutil import MediaInfo, _popen_kwargs, ffmpeg_bin
 
-EVENT_KINDS = ("shot", "explosion", "impact", "burst", "flash", "rush")
+EVENT_KINDS = ("shot", "explosion", "impact", "burst", "flash", "rush", "reaction", "surprise")
 
 
 def _robust(x: np.ndarray) -> tuple[float, float]:
@@ -212,6 +215,82 @@ def color_profile(path: str | Path, duration: float, samples: int = 12) -> dict:
             "saturation": round(float(hsv[:, 1].mean()), 3), "luma": round(luma, 3)}
 
 
+def detect_reactions(energy: np.ndarray, voice: np.ndarray, flat: np.ndarray, hop: float,
+                     min_seconds: float = 0.3, max_seconds: float = 3.0) -> list[dict]:
+    """Réactions du joueur (cri, exclamation, rire) : passage soutenu, fort, riche en voix.
+
+    Approximation : sans piste micro séparée, on cherche un son harmonique dans la bande
+    300-3400 Hz nettement au-dessus du fond. Les sons de jeu tonaux peuvent tromper.
+    """
+    if energy.size < 50 or voice.size != energy.size or flat.size != energy.size:
+        return []
+    level = 20.0 * np.log10(energy + 1e-4)
+    loud = level > np.percentile(level, 75)
+    v_med, v_mad = _robust(voice)
+    # voix = beaucoup d'énergie dans 300-3400 Hz ET spectre harmonique (peu plat) ;
+    # une explosion ou un souffle remplit aussi la bande mais avec un spectre plat
+    vocal = (voice > max(0.5, v_med + 2 * v_mad)) & (flat < 0.3)
+    width = max(1, int(0.2 / hop))
+    smooth = np.convolve((loud & vocal).astype(float), np.ones(width) / width, mode="same") > 0.6
+    out, k = [], 0
+    while k < smooth.size:
+        if smooth[k]:
+            j = k
+            while j < smooth.size and smooth[j]:
+                j += 1
+            d = (j - k) * hop
+            if min_seconds <= d <= max_seconds:
+                out.append({"t": round(k * hop, 3), "end": round(j * hop, 3), "kind": "reaction",
+                            "strength": round(float(min(1.0, (voice[k:j].mean() - v_med)
+                                                        / (10 * v_mad + 1e-9))), 3)})
+            k = j
+        else:
+            k += 1
+    return out
+
+
+def detect_surprises(onsets: list[dict], energy: np.ndarray, hop: float,
+                     quiet_seconds: float = 1.5) -> list[dict]:
+    """Silence puis pic brutal (jump scare, clutch) : un calme d'au moins 1,5 s suivi d'un
+    transitoire bien plus fort que le fond."""
+    if energy.size < 50:
+        return []
+    level = 20.0 * np.log10(energy + 1e-4)
+    quiet = float(np.median(level)) - 12.0  # nettement plus calme que d'habitude
+    out = []
+    n = int(quiet_seconds / hop)
+    for o in onsets:
+        i = int(o["t"] / hop)
+        if i < n:
+            continue
+        before = level[i - n:i - 1]
+        if before.size and float(np.median(before)) <= quiet and o["level"] - float(before.max()) >= 15:
+            out.append({"t": o["t"], "kind": "surprise", "strength": round(min(1.0, o["strength"] + 0.2), 3)})
+    return out
+
+
+ACTION_KINDS = ("shot", "explosion", "impact", "burst", "surprise", "reaction")
+
+
+def detect_streaks(events: list[dict], max_gap: float = 8.0, min_count: int = 3) -> list[dict]:
+    """Séries : au moins 3 moments d'action à moins de 8 s d'écart = un seul grand moment
+    (un triple kill vaut plus que trois kills séparés)."""
+    action = sorted((e for e in events if e["kind"] in ACTION_KINDS and e["kind"] != "burst"),
+                    key=lambda e: e["t"])
+    streaks, run = [], []
+    for e in action + [{"t": 1e12}]:
+        if run and abs(e["t"] - run[-1]["t"]) < 0.3:
+            continue  # même instant vu par deux détecteurs (attaque + réaction) : un seul coup
+        if run and e["t"] - run[-1]["t"] < max_gap:
+            run.append(e)
+            continue
+        if len(run) >= min_count:
+            streaks.append({"start": run[0]["t"], "end": run[-1]["t"], "count": len(run),
+                            "kinds": sorted({x["kind"] for x in run})})
+        run = [e] if e["t"] < 1e12 else []
+    return streaks
+
+
 def ui_windows(coverage: np.ndarray, video_fps: float, threshold: float = 0.05,
                min_seconds: float = 1.5) -> list[list[float]]:
     """Passages de menu, d'écran de pause ou de chargement : presque rien ne bouge.
@@ -252,13 +331,20 @@ def analyze(path: str | Path, info: MediaInfo, signals) -> dict:
     video_fps = float(ex.get("video_fps", 4))
     events = classify(onsets, np.asarray(ex.get("brightness", [])), signals.motion,
                       video_fps, signals.window)
+    energy = np.asarray(ex.get("fine_energy", []))
+    events += detect_reactions(energy, np.asarray(ex.get("fine_voice", [])),
+                               np.asarray(ex.get("fine_flat", [])), hop)
+    events += detect_surprises(onsets, energy, hop)
+    events.sort(key=lambda e: e["t"])
     ui = ui_windows(np.asarray(ex.get("coverage", [])), video_fps)
     events = [e for e in events if not in_windows(e["t"], ui, 0.3)]
+    streaks = detect_streaks(events)
     focus = focus_track(np.asarray(ex.get("focus_x", [])), video_fps)
     minutes = max(info.duration / 60.0, 1 / 60)
     counts = {k: sum(1 for e in events if e["kind"] == k) for k in EVENT_KINDS}
     return {
         "events": events,
+        "streaks": streaks,
         "ui_windows": ui,
         "focus": focus,
         "color": color_profile(path, info.duration) if info.has_video else {},
