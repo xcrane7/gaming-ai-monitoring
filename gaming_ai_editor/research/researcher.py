@@ -532,10 +532,10 @@ class SkillsResearcher:
         react = [float(diff[int(h * 30):int(h * 30) + 6].mean()) for h in hits
                  if int(h * 30) + 6 < diff.size]
         base = float(np.median(diff)) or 1e-3
-        readability = min(10.0, 10 * (np.mean(react) / base - 1) / 3) if react else 0.0
+        readability = float(min(10.0, 10 * (np.mean(react) / base - 1) / 3)) if react else 0.0
         failed = [c["name"] for c in qa["checks"] if c["status"] == FAIL]
         out.unlink(missing_ok=True)
-        return {"score": round(qa["score"] + readability, 2), "qa_score": qa["score"],
+        return {"score": round(float(qa["score"] + readability), 2), "qa_score": float(qa["score"]),
                 "readability": round(readability, 2), "failed": failed,
                 "seconds": round(seconds, 2), "metric": "motion_v1"}
 
@@ -559,7 +559,7 @@ class SkillsResearcher:
             sid = self.registry.add_candidate("motion_preset", name, "1", params)
             self.registry.set_status(sid, TESTING)
             m = self._score_motion(params)
-            better = not m["failed"] and m["score"] >= base["score"] + 1.0 \
+            better = bool(not m["failed"] and m["score"] >= base["score"] + 1.0) \
                 and m["seconds"] <= base["seconds"] * 1.3
             why = (f"score {m['score']} contre {base['score']} (actif), lisibilité "
                    f"{m['readability']}, rendu {m['seconds']} s"

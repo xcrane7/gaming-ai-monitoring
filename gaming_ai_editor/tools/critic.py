@@ -56,7 +56,8 @@ def checklist(plan: EditPlan, duration: float) -> list[dict]:
                   "ok": not same, "preuve": f"durées {[round(d, 1) for d in durs]}"
                   + (f", trop proches : {same}" if same else "")})
     offsets = plan.offsets()
-    climax = [i for i, s in enumerate(plan.segments) if s.speed_ramp() or s.role == "climax"]
+    climax = [i for i, s in enumerate(plan.segments)
+              if (s.speed_ramp() and s.speed_ramp().slow) or s.role == "climax"]
     if climax:
         pos = (offsets[climax[-1]] + plan.segments[climax[-1]].out_duration / 2) / max(duration, 1)
         items.append({"point": "climax dans le dernier tiers", "ok": pos >= 0.6,
@@ -109,7 +110,9 @@ def critique(render: Path, out: Path, plan_dict: dict | None = None,
             files[f"jonction{j + 1}_apres"] = str(frame(render, t + 0.15,
                                                         out / f"jonction{j + 1}_apres.png"))
         report["clips"] = [{"rôle": s.role or "-", "source": f"{s.start:.1f}-{s.end:.1f}s",
-                            "durée": round(s.out_duration, 2), "ralenti": bool(s.ramp),
+                            "durée": round(s.out_duration, 2),
+                            "ralenti": bool(s.ramp) and s.ramp[2] < 1,
+                            "accéléré": bool(s.ramp) and s.ramp[2] > 1,
                             "événements": [e["kind"] for e in s.events]}
                            for s in plan.segments]
         report["transitions"] = [{"type": n, "durée": d} for n, d in

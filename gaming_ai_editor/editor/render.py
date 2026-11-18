@@ -28,7 +28,7 @@ from ..engines import color as color_engine
 from ..engines import graphics as gfx_engine
 from ..engines import vfx
 from ..engines.motion import CameraMove, _f, camera_filters, expr_piecewise, motion_blur
-from ..ffutil import (BUILTIN_ENCODE_PROFILE, FFmpegError, MediaInfo, probe,
+from ..ffutil import (BUILTIN_ENCODE_PROFILE, FFmpegError, MediaInfo, filter_available, probe,
                       resolve_encoder_family, run_ffmpeg)
 from . import subtitles as subs
 from .plan import EditPlan, Segment
@@ -38,9 +38,13 @@ XFADE_STYLES = ["fade", "slideleft", "fade", "slideup", "fade", "smoothleft"]
 
 
 def layout_filter(plan: EditPlan, layout: str, fg_aspect: float = 0.8,
-                  focus: list | None = None) -> str:
-    """Mise au format de sortie (sans étiquettes) : entrée quelconque -> W x H."""
-    w, h = plan.width, plan.height
+                  focus: list | None = None, size: tuple[int, int] | None = None) -> str:
+    """Mise au format de sortie (sans étiquettes) : entrée quelconque -> W x H.
+
+    `size` permet de produire une image plus grande que la sortie (sur-échantillonnage) :
+    les zooms de caméra recadrent alors dans de vrais pixels au lieu d'agrandir l'image.
+    """
+    w, h = size or (plan.width, plan.height)
     if h <= w:  # horizontal : mise à l'échelle + bandes si le ratio diffère
         return (f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=bicubic,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2")
@@ -120,9 +124,13 @@ class Renderer:
             chain += [f"setpts='{ramp.setpts_expr()}'", f"framerate=fps={fps:g}"]
         else:
             chain.append(f"fps={fps:g}")
-        lay = layout_filter(plan, layout, float(fc.get("fg_aspect", 0.8)), seg.focus)
-        graph = f"[0:v:0]{','.join(chain)}[pre];[pre]{lay},setsar=1"
         cam = seg.camera or {}
+        size = None
+        k_ss = float(self.cfg["render"].get("supersample", 1.0))
+        if cam and k_ss > 1.0:  # punch-in net : on zoome dans une image plus grande
+            size = (int(plan.width * k_ss) // 2 * 2, int(plan.height * k_ss) // 2 * 2)
+        lay = layout_filter(plan, layout, float(fc.get("fg_aspect", 0.8)), seg.focus, size)
+        graph = f"[0:v:0]{','.join(chain)}[pre];[pre]{lay},setsar=1"
         k = float(plan.style.get("intensity", 1.0)) if plan.style else 1.0
         if cam:
             move = CameraMove(
@@ -168,30 +176,59 @@ class Renderer:
         graph += f";[{label}]{','.join(tail)}[v]"
         return graph
 
-    def _clip_audio_graph(self, seg: Segment, info: MediaInfo, has_input_audio: bool) -> str:
+    def _tempo(self, rate: float, slow: bool) -> str:
+        """Filtre audio qui change la vitesse du son d'un facteur `rate`."""
+        mode = self.cfg["style"].get("slowmo_audio", "keep_pitch") if slow else "keep_pitch"
+        if mode == "deep":  # son ralenti et plus grave, façon « bullet time »
+            return f"asetrate={int(48000 * rate)},aresample=48000,lowpass=f=2800"
+        if filter_available("rubberband"):  # hauteur conservée, meilleure qualité
+            return f"rubberband=tempo={rate:.5f}:pitch=1"
+        parts, r = [], rate  # atempo accepte 0,5 à 2 par instance : on enchaîne
+        while r < 0.5:
+            parts.append("atempo=0.5")
+            r /= 0.5
+        while r > 2.0:
+            parts.append("atempo=2.0")
+            r /= 2.0
+        parts.append(f"atempo={r:.5f}")
+        return ",".join(parts)
+
+    def _clip_audio_graph(self, seg: Segment, info: MediaInfo, has_input_audio: bool,
+                          lead: float = 0.0, lead_next: float = 0.0, ain: int = 0) -> str:
+        """Son du clip. `lead` : le son commence `lead` s avant l'image (coupe en J) ;
+        `lead_next` : il s'arrête d'autant plus tôt, le clip suivant ayant pris le relais."""
         d = seg.out_duration
+        length = d + lead - lead_next
         fmt = "aresample=48000:async=1,aformat=sample_fmts=fltp:channel_layouts=stereo"
-        fade = (f"afade=t=in:d=0.03,apad,atrim=0:{d:.6f},"
-                f"afade=t=out:st={max(0.0, d - 0.03):.6f}:d=0.03")
+        fade = (f"afade=t=in:d=0.03,apad,atrim=0:{length:.6f},"
+                f"afade=t=out:st={max(0.0, length - 0.03):.6f}:d=0.03")
         if not has_input_audio:
-            return f"[1:a]{fmt},{fade}[a]"
+            return f"[{ain}:a]{fmt},{fade}[a]"
         if self.cfg["render"]["audio_tracks"] == "mix" and info.audio_streams > 1:
-            ins = "".join(f"[0:a:{i}]" for i in range(info.audio_streams))
+            ins = "".join(f"[{ain}:a:{i}]" for i in range(info.audio_streams))
             src = f"{ins}amix=inputs={info.audio_streams}:normalize=0,{fmt}"
         else:
-            src = f"[0:a:0]{fmt}"
+            src = f"[{ain}:a:0]{fmt}"
         ramp = seg.speed_ramp()
         if not ramp:
             return f"{src},{fade}[a]"
-        r = ramp.audio_rate()
-        a, b = ramp.start, ramp.end
-        # pendant le ralenti : son ralenti et plus grave (effet « bullet time »)
+        a, b = ramp.start + lead, ramp.end + lead
         return (f"{src},asetpts=PTS-STARTPTS,asplit=3[s1][s2][s3];"
                 f"[s1]atrim=0:{_f(a)},asetpts=PTS-STARTPTS[p1];"
                 f"[s2]atrim={_f(a)}:{_f(b)},asetpts=PTS-STARTPTS,"
-                f"asetrate={int(48000 * r)},aresample=48000,lowpass=f=2800[p2];"
+                f"{self._tempo(ramp.audio_rate(), ramp.slow)}[p2];"
                 f"[s3]atrim={_f(b)},asetpts=PTS-STARTPTS[p3];"
                 f"[p1][p2][p3]concat=n=3:v=0:a=1,{fmt},{fade}[a]")
+
+    def audio_leads(self, plan: EditPlan) -> list[float]:
+        """Avance du son de chaque clip (coupes en J) : format long uniquement."""
+        jl = float(self.cfg["long"].get("jl_cuts", 0.0)) if plan.format == "long" else 0.0
+        if jl <= 0 or len(plan.segments) < 2:
+            return [0.0] * len(plan.segments)
+        leads = [0.0]
+        for seg in plan.segments[1:]:
+            leads.append(round(min(jl, seg.start, max(0.0, seg.duration - 1.0)), 4))
+        return leads
 
     def _render_clip(self, plan: EditPlan, index: int, out: Path, infos: dict[str, MediaInfo],
                      on_progress=None, work: Path | None = None, cube: Path | None = None) -> None:
@@ -203,18 +240,29 @@ class Renderer:
         if layout == "auto":
             layout = "hybrid"
         inputs = ["-ss", f"{seg.start:.6f}", "-t", f"{seg.duration + 0.5:.6f}", "-i", seg.source]
+        leads = self.audio_leads(plan)
+        lead = leads[index]
+        lead_next = leads[index + 1] if index + 1 < len(leads) else 0.0
+        ain = 0
         if not info.has_audio:
-            inputs += ["-f", "lavfi", "-t", f"{d:.6f}", "-i", "anullsrc=r=48000:cl=stereo"]
+            inputs += ["-f", "lavfi", "-t", f"{d + lead:.6f}", "-i", "anullsrc=r=48000:cl=stereo"]
+            ain = 1
+        elif lead > 0:  # coupe en J : le son est lu depuis un peu avant l'image
+            inputs += ["-ss", f"{seg.start - lead:.6f}", "-t", f"{seg.duration + lead + 0.5:.6f}",
+                       "-i", seg.source]
+            ain = 1
         if styled(plan):
             vgraph = self._clip_video_graph(plan, seg, layout, cube)
         else:
             vgraph = video_filter(plan, layout, float(fc.get("fg_aspect", 0.8)))
-        agraph = self._clip_audio_graph(seg, info, info.has_audio)
+        agraph = self._clip_audio_graph(seg, info, info.has_audio, lead, lead_next, ain)
+        if vgraph.endswith("[v]"):  # l'image fait exactement la durée prévue (le son peut
+            vgraph = vgraph[:-3] + f",trim=duration={d:.6f}[v]"  # déborder : coupe en J)
 
         def build(family: str) -> list[str]:
             return [*inputs, "-filter_complex", f"{vgraph};{agraph}", "-map", "[v]",
                     "-map", "[a]", *self._codec(family, "mezzanine"), "-c:a", "pcm_s16le",
-                    "-t", f"{d:.6f}", str(out)]
+                    "-t", f"{d + max(lead, 0.0):.6f}", str(out)]
 
         self._encode(build, duration=d, on_progress=on_progress, cwd=work)
 
@@ -237,6 +285,21 @@ class Renderer:
         found = pick_music(self.cfg.path("music"), out_stem)
         return found, {"music": found.name if found else None}
 
+    @staticmethod
+    def _music_envelope(plan: EditPlan) -> str:
+        """Musique fournie : +3 dB pendant la montée vers le climax, chute nette 0,3 s avant
+        le pic, puis retour au niveau normal au drop. (La musique générée le fait déjà.)"""
+        m = plan.music or {}
+        if m.get("mode") != "user" or not m.get("calm") or not m.get("drop_at"):
+            return ""
+        calm_a, drop = float(m["calm"][0]), float(m["drop_at"])
+        bpm = float(m.get("bpm") or 120)
+        build_a = max(0.0, calm_a - 0.3 - 8 * 60.0 / bpm)  # deux mesures de montée
+        dip_a = max(build_a, calm_a - 0.3)
+        rise = f"(1+0.413*(t-{_f(build_a)})/{_f(max(dip_a - build_a, 0.1))})"
+        return (f"if(between(t,{_f(build_a)},{_f(dip_a)}),{rise},"
+                f"if(between(t,{_f(dip_a)},{_f(drop)}),0.4,1))")
+
     def _sfx_track(self, plan: EditPlan, work: Path, total: float) -> tuple[Path | None, int]:
         cues = list(plan.sfx or [])
         if not cues and self.cfg["sfx"]["enabled"] and plan.transition == "xfade" \
@@ -244,10 +307,14 @@ class Renderer:
             cues = [{"t": t, "kind": "whoosh", "gain": 1.0} for t in plan.junctions()]
         if not cues or not self.cfg["sfx"]["enabled"]:
             return None, 0
-        samples = {}
-        whoosh = find_sfx(self.cfg.path("sfx"), "whoosh")
-        if whoosh is not None and not plan.sfx:
-            samples["whoosh"] = audio_engine.load_mono(whoosh, audio_engine.SR)
+        samples = {}  # tes propres sons (assets/sfx/<type>.wav...) remplacent les synthétisés
+        for kind in audio_engine.SFX_KINDS:
+            found = find_sfx(self.cfg.path("sfx"), kind)
+            if found is not None:
+                try:
+                    samples[kind] = audio_engine.load_mono(found, audio_engine.SR)
+                except Exception:
+                    continue
         path = audio_engine.render_sfx_track(cues, total, work / "sfx.wav", samples)
         return path, len(cues)
 
@@ -269,18 +336,26 @@ class Renderer:
         elif t > 0:
             prev_v, prev_a = "[0:v]", "[0:a]"
             styles = plan.transitions or []
+            whips = []
             for k in range(1, n):
                 d = laps[k - 1]
                 style = styles[k - 1] if k - 1 < len(styles) else \
                     XFADE_STYLES[(k - 1) % len(XFADE_STYLES)]
+                if style.startswith("whip"):  # glissé très rapide + flou de mouvement
+                    whips.append((offsets[k] - 0.06, offsets[k] + d + 0.06))
+                    style = "slideleft" if style == "whipleft" else "slideright"
                 graph.append(f"{prev_v}[{k}:v]xfade=transition={style}:duration={d:.4f}:"
                              f"offset={offsets[k]:.4f}[xv{k}]")
                 graph.append(f"{prev_a}[{k}:a]acrossfade=d={d:.4f}:c1=tri:c2=tri[xa{k}]")
                 prev_v, prev_a = f"[xv{k}]", f"[xa{k}]"
-            graph.append(f"{prev_v}null[vc];{prev_a}anull[ac]")
+            blur = f",{motion_blur(whips)}" if whips else ""
+            graph.append(f"{prev_v}null{blur}[vc];{prev_a}anull[ac]")
         else:
-            pads = "".join(f"[{k}:v][{k}:a]" for k in range(n))
-            graph.append(f"{pads}concat=n={n}:v=1:a=1[vc][ac]")
+            # image et son concaténés séparément : avec les coupes en J, le son d'un clip
+            # peut être un peu plus long que son image (il déborde sur le clip précédent)
+            vpads = "".join(f"[{k}:v]" for k in range(n))
+            apads = "".join(f"[{k}:a]" for k in range(n))
+            graph.append(f"{vpads}concat=n={n}:v=1:a=0[vc];{apads}concat=n={n}:v=0:a=1[ac]")
 
         fade_out = max(0.0, total - 0.35)
         # boucle : ni fondu d'entrée ni fondu au noir, la relecture enchaîne sans coupure
@@ -309,6 +384,9 @@ class Renderer:
             vol = float(self.cfg["music"]["volume_db"]) + (8.0 if style else 0.0)
             chain = (f"[{next_input}:a]aresample=48000,aformat=sample_fmts=fltp:"
                      f"channel_layouts=stereo,atrim=0:{total:.3f},volume={vol}dB")
+            env = self._music_envelope(plan)
+            if env:
+                chain += f",volume='{env}':eval=frame"
             if not style:
                 chain += f",afade=t=in:d=0.8,afade=t=out:st={max(0.0, total - 1.5):.3f}:d=1.5"
             if need_key:

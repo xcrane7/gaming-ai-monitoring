@@ -95,7 +95,7 @@ def planned_times(plan: EditPlan) -> dict:
         for t, _f in (seg.vfx or {}).get("flash", []):
             flashes.append(off + float(t))
         r = seg.speed_ramp()
-        if r:
+        if r:  # ralentis (images répétées normales) et accélérations
             ramps.append((off + r.start, off + r.map(r.end)))
     impacts = [float(c["t"]) for c in plan.sfx or [] if c["kind"] in ("impact", "boom")]
     return {"flashes": flashes, "impacts": impacts, "junctions": plan.junctions(),

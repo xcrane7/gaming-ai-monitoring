@@ -4,7 +4,10 @@
     "enabled": true,
     "channel_name": "",
     "accent_color": "",
-    "hud": true
+    "hud": true,
+    "slowmo_audio": "keep_pitch",
+    "speed_up_dead_time": true,
+    "dead_time_speed": 1.7
   },
   "short": {
     "target_seconds": 45,
@@ -18,11 +21,13 @@
     "target_seconds": 480,
     "width": 1920,
     "height": 1080,
-    "bounds": "adaptive"
+    "bounds": "adaptive",
+    "jl_cuts": 0.2
   },
   "render": {
     "encoder": "auto",
-    "max_fps": 60
+    "max_fps": 60,
+    "supersample": 1.15
   },
   "music": {
     "enabled": true,
@@ -63,7 +68,11 @@
     "subtitles.style": "words ou tiktok (mot à mot animé) | classic (sous-titres ASS)",
     "ai.vision_order": "qui étiquette les moments forts : gemini (clé gratuite) puis claude (abonnement)",
     "games": "zones (fractions de l'image) et mots-clés du texte à lire à l'écran, par jeu ; « match » = morceau du nom de fichier",
-    "short.hook_text": "auto (Claude ou modèle selon le meilleur moment) | off | un texte fixe"
+    "short.hook_text": "auto (Claude ou modèle selon le meilleur moment) | off | un texte fixe",
+    "style.slowmo_audio": "keep_pitch (hauteur conservée) | deep (son grave façon bullet time)",
+    "style.speed_up_dead_time": "accélère (×dead_time_speed) le plus long temps mort des clips de montée",
+    "render.supersample": "1.15 : punch-in net (zoom dans une image plus grande) ; 1.0 = désactivé, plus rapide",
+    "long.jl_cuts": "secondes d avance du son à chaque coupe du format long (0 = désactivé)"
   },
   "analysis": {
     "rerank": true,

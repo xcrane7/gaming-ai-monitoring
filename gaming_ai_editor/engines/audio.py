@@ -260,6 +260,13 @@ def render_sfx_track(cues: list[dict], duration: float, path: str | Path,
         if key not in cache:
             cache[key] = samples[kind] if kind in samples else sfx(kind, seed=7 * (i % 3) + 1)
         x = cache[key] * float(cue.get("gain", 1.0))
+        if kind not in ("riser", "sub_drop"):
+            # jamais deux fois exactement le même son : ±5 % de hauteur, ±1,5 dB
+            rng = np.random.default_rng(i * 7919 + 13)
+            pitch = float(rng.uniform(0.95, 1.05))
+            n_out = max(1, int(x.size / pitch))
+            x = np.interp(np.arange(n_out) * pitch, np.arange(x.size), x)
+            x = x * 10 ** (float(rng.uniform(-1.5, 1.5)) / 20)
         start = float(cue["t"])
         if kind == "riser":
             start -= x.size / SR

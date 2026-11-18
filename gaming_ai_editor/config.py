@@ -82,6 +82,7 @@ DEFAULTS: dict[str, Any] = {
         "merge_gap": 4.0,
         "bounds": "adaptive",
         "lead_min": 1.5, "lead_max": 8.0, "tail_max": 6.0,
+        "jl_cuts": 0.2,  # coupe en J : le son du clip suivant arrive 0,2 s avant l'image
         "transition": "cut",
         "transition_seconds": 0.4,
     },
@@ -92,6 +93,8 @@ DEFAULTS: dict[str, Any] = {
         "loudness_lufs": -14.0,
         "audio_tracks": "first",  # "first" | "mix" (OBS multi-pistes)
         "keep_work_files": False,
+        # zooms de caméra dans une image 1,15× plus grande : punch-in net (1.0 = désactivé)
+        "supersample": 1.15,
     },
     "style": {
         # Moteur de motion design. "enabled": false = ancien montage simple.
@@ -107,6 +110,9 @@ DEFAULTS: dict[str, Any] = {
         "beat_sync": True,
         "grade": True,
         "subscribe_outro": True,
+        "slowmo_audio": "keep_pitch",  # "keep_pitch" (hauteur conservée) | "deep" (bullet time)
+        "speed_up_dead_time": True,  # accélère le plus long temps mort des clips de montée
+        "dead_time_speed": 1.7,
     },
     "music": {
         "enabled": True,  # utilisée seulement si assets/music contient des fichiers

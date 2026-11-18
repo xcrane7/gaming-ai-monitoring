@@ -225,7 +225,7 @@ def test_compilation_of_several_clips(cfg, orch, media):
         ids.append(vid)
     report = orch.process_job(orch.compile(ids, "soiree", ["short"]))
     out = report["outputs"][0]
-    assert out["qa"]["status"] == "pass"
+    assert out["qa"]["status"] == "pass", [c for c in out["qa"]["checks"] if c["status"] != "pass"]
     sources = {s["source"] for s in out["plan"]["segments"]}
     assert len(sources) == 2, "la compilation mélange les deux vidéos"
     assert Path(out["path"]).name == "soiree_short.mp4"

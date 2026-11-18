@@ -157,6 +157,21 @@ def encoder_works(codec: str) -> bool:
     return ok
 
 
+_FILTER_CACHE: dict[str, bool] = {}
+
+
+def filter_available(name: str) -> bool:
+    """Le filtre FFmpeg existe-t-il dans cette installation ? (ex. rubberband)"""
+    if name not in _FILTER_CACHE:
+        try:
+            out = subprocess.run([ffmpeg_bin(), "-hide_banner", "-filters"], capture_output=True,
+                                 text=True, timeout=30, **_popen_kwargs()).stdout
+            _FILTER_CACHE[name] = f" {name} " in out
+        except (OSError, subprocess.TimeoutExpired):
+            _FILTER_CACHE[name] = False
+    return _FILTER_CACHE[name]
+
+
 def nvenc_available() -> bool:
     return encoder_works("h264_nvenc")
 

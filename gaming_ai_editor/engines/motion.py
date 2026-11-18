@@ -147,7 +147,8 @@ def expr_piecewise(points: list[tuple[float, float]], var: str = "t",
 
 @dataclass
 class SpeedRamp:
-    """Ralenti progressif entre `start` et `end` (secondes, relatives au clip source)."""
+    """Changement de vitesse progressif entre `start` et `end` (secondes, relatives au clip
+    source) : ralenti si `min_speed` < 1, accélération d'un temps mort si > 1."""
 
     start: float
     end: float
@@ -199,15 +200,36 @@ class SpeedRamp:
                 return o0 + (o1 - o0) * (r - r0) / max(r1 - r0, 1e-9)
         return r
 
+    def compact_knots(self, step: float = 1 / 30) -> list[tuple[float, float]]:
+        """Points de correspondance détaillés seulement pendant les deux transitions de
+        vitesse ; au milieu la vitesse est constante, la correspondance est une droite.
+        Le nombre de points ne dépend donc pas de la longueur de la rampe (FFmpeg refuse les
+        expressions trop imbriquées)."""
+        full = self.knots(step=1 / 240)
+        e = self.ease
+        keep_in = [p for p in full if p[0] <= self.start + e + 1e-9]
+        keep_out = [p for p in full if p[0] >= self.end - e - 1e-9]
+        pts = keep_in[:: max(1, int(len(keep_in) / max(1, round(e / step))))] + [keep_in[-1]]
+        pts += keep_out[:: max(1, int(len(keep_out) / max(1, round(e / step))))] + [full[-1]]
+        out: list[tuple[float, float]] = []
+        for p in sorted(pts):
+            if not out or p[0] - out[-1][0] > 1e-6:
+                out.append(p)
+        return out
+
     def setpts_expr(self) -> str:
         """Expression `setpts` : nouveau temps de présentation en fonction du temps source T."""
-        k = self.knots(step=1 / 30)
+        k = self.compact_knots()
         body = expr_piecewise(k, var="T", smooth=False)
         after = f"(T+{_f(k[-1][1] - k[-1][0])})"
         return f"(if(lt(T,{_f(self.start)}),T,if(gte(T,{_f(self.end)}),{after},{body})))/TB"
 
+    @property
+    def slow(self) -> bool:
+        return self.min_speed < 1.0
+
     def audio_rate(self) -> float:
-        """Facteur de lecture du son pendant le ralenti (son grave, façon « bullet time »)."""
+        """Facteur de vitesse du son sur la rampe (< 1 : ralenti, > 1 : accéléré)."""
         k = self.knots()
         return (self.end - self.start) / max(k[-1][1] - self.start, 1e-6)
 

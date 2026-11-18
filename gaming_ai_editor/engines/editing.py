@@ -253,6 +253,9 @@ class Director:
         plan = self.plan
         for seg in list(plan.segments):
             if seg.role == "build" and not seg.events and seg.duration < 3.0:
+                alone = sum(1 for s in plan.segments if s.source == seg.source) == 1
+                if alone:  # compilation : chaque vidéo garde au moins un passage
+                    continue
                 if plan.duration - seg.out_duration >= plan.min_seconds:
                     plan.segments.remove(seg)
                     plan.notes.append(f"Clip sans action retiré ({seg.start:.1f}-{seg.end:.1f} s).")
@@ -307,6 +310,39 @@ class Director:
             if longest.duration - beat < 2.0:
                 break
             longest.end -= beat
+
+    def speed_up_dead_time(self) -> None:
+        """Accélère (×1,7 par défaut, son à hauteur conservée) le plus long temps mort d'un
+        clip de montée : au moins 2,5 s sans événement et sous l'intensité médiane."""
+        st = self.cfg["style"]
+        factor = float(st.get("dead_time_speed", 1.7))
+        if not st.get("speed_up_dead_time", True) or factor <= 1.0:
+            return
+        for seg in self.plan.segments:
+            if seg.ramp or seg.role not in ("build", ""):
+                continue
+            a = self.by_path.get(seg.source, {})
+            score = a.get("score") or []
+            w = float(a.get("window") or 0.5)
+            if not score:
+                continue
+            med = sorted(score)[len(score) // 2]
+            busy = [e["t"] for e in seg.events] + [seg.peak]
+            best, run_start = None, None
+            t = seg.start + 0.5
+            while t <= seg.end - 0.5:
+                k = min(len(score) - 1, int(t / w))
+                dead = score[k] <= med and all(abs(t - b) > 0.8 for b in busy)
+                if dead and run_start is None:
+                    run_start = t
+                if (not dead or t + w > seg.end - 0.5) and run_start is not None:
+                    end = t - w if not dead else t  # dernier instant encore « mort »
+                    if end - run_start >= 2.5 and (best is None or end - run_start > best[1] - best[0]):
+                        best = (run_start, end)
+                    run_start = None
+                t += w
+            if best:
+                seg.ramp = [round(best[0], 4), round(best[1], 4), factor]
 
     def choose_ramps(self) -> None:
         st = self.cfg["style"]
@@ -410,7 +446,7 @@ class Director:
                 windows.setdefault("motion_blur", []).append((t, round(min(d, t + 0.25), 4)))
             ramp = seg.speed_ramp()
             smooth = None
-            if ramp:
+            if ramp and ramp.slow:  # zoom avant pendant un ralenti, pas pendant une accélération
                 smooth = (round(ramp.start, 4), round(ramp.map(ramp.end), 4))
             clip_beats = [round(b - off, 4) for b in beats if 0.1 < b - off < d - 0.1]
             seg.camera = {
@@ -457,23 +493,29 @@ class Director:
             strong = any(e["kind"] == "explosion" for e in nxt.events)
             if cur.role == "teaser":
                 visible, choice = True, "fadewhite"
-            elif nxt.role == "climax":
+            elif nxt.role == "climax":  # flash blanc avant le pic (zoomin si déjà flashé)
                 visible = True
-                choice = self.rng.choice([t for t in ("zoomin", "fadewhite", "hblur")
-                                          if t != last])
+                choice = "fadewhite" if last != "fadewhite" else "zoomin"
             elif not self.short or not cur.role:
                 visible = True
                 choice = None
             else:  # montée : coupe sèche, sauf de temps en temps
                 visible = since_visible >= 2 and self.rng.random() < 0.5
                 choice = None
+            similar = abs(cur.score - nxt.score) / max(cur.score, nxt.score, 1e-6) < 0.3
+            if visible and choice is None and similar and self.short \
+                    and not (last or "").startswith("whip"):
+                # deux moments d'énergie proche : « whip » (glissé éclair + flou de mouvement)
+                choice = "whipleft" if k % 2 == 0 else "whipright"
             if visible:
                 if choice is None:
                     options = [t for t in family if t != last]
                     choice = "fadewhite" if strong and "fadewhite" in options else \
                         self.rng.choice(options)
                 names.append(choice)
-                durations.append(round(visible_len * (1.4 if nxt.role == "climax" else 1.0), 3))
+                length = 0.12 if choice.startswith("whip") else \
+                    visible_len * (1.4 if nxt.role == "climax" else 1.0)
+                durations.append(round(length, 3))
                 since_visible = 0
             else:  # « coupe » : fondu de 2 images, imperceptible, garde la chaîne xfade
                 names.append("fade")
@@ -653,17 +695,22 @@ class Director:
 
     # -- 7. musique : drop au moment fort -------------------------------------------------
     def finalize_music(self) -> None:
+        """Instants de la montée, du passage calme (ralenti) et du drop. Musique générée :
+        elle est composée autour ; musique fournie : son volume suit (render._music_envelope)."""
         m = self.plan.music
-        if m.get("mode") != "generated":
+        if m.get("mode") not in ("generated", "user"):
             return
         offsets = self.plan.offsets()
         for i, seg in enumerate(self.plan.segments):
             ramp = seg.speed_ramp()
-            if ramp:
+            if ramp and ramp.slow:
                 a = offsets[i] + ramp.start
                 b = offsets[i] + ramp.map(ramp.end)
                 beat = 60.0 / m["bpm"]
-                drop = round(math.ceil(b / beat - 1e-6) * beat, 4)  # premier temps après le ralenti
+                if m["mode"] == "user" and m.get("beats"):
+                    drop = round(min((x for x in m["beats"] if x >= b - 1e-6), default=b), 4)
+                else:
+                    drop = round(math.ceil(b / beat - 1e-6) * beat, 4)  # 1er temps après le ralenti
                 m["calm"] = [round(a, 4), round(drop, 4)]
                 m["drop_at"] = drop
                 break
@@ -676,6 +723,7 @@ class Director:
         self.choose_events()
         self.drop_dead_clips()
         self.choose_ramps()
+        self.speed_up_dead_time()
         self.choose_transitions()  # avant la musique : les coupes se calent sur le tempo
         self.plan_music()
         if self.short:
