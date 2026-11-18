@@ -11,7 +11,8 @@
     "layout": "auto",
     "structure": "story",
     "bounds": "adaptive",
-    "loop_ending": true
+    "loop_ending": true,
+    "hook_text": "auto"
   },
   "long": {
     "target_seconds": 480,
@@ -59,9 +60,10 @@
     "short.structure": "story (cold open + montée + climax à la fin) | best_first | chrono",
     "short.bounds / long.bounds": "adaptive (suit l'action) | fixed (pre_roll / post_roll)",
     "short.loop_ending": "true : fin coupée net pour la relecture TikTok (pas de bouton d'abonnement)",
-    "subtitles.style": "words (mot à mot animé) | classic (sous-titres ASS)",
+    "subtitles.style": "words ou tiktok (mot à mot animé) | classic (sous-titres ASS)",
     "ai.vision_order": "qui étiquette les moments forts : gemini (clé gratuite) puis claude (abonnement)",
-    "games": "zones (fractions de l'image) et mots-clés du texte à lire à l'écran, par jeu ; « match » = morceau du nom de fichier"
+    "games": "zones (fractions de l'image) et mots-clés du texte à lire à l'écran, par jeu ; « match » = morceau du nom de fichier",
+    "short.hook_text": "auto (Claude ou modèle selon le meilleur moment) | off | un texte fixe"
   },
   "analysis": {
     "rerank": true,

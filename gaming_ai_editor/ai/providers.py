@@ -418,11 +418,19 @@ class ClaudeDirector:
         for a in analyses:
             for e in sorted(a.get("events", []), key=lambda e: -e.get("strength", 0))[:10]:
                 events.append(f"{e['kind']} à {e['t']:.0f}s (force {e.get('strength', 0):.2f})")
+        best = []
+        for a in analyses:  # ce que l'IA / l'OCR ont compris des meilleurs moments
+            for h in a.get("highlights", [])[:5]:
+                why = (h.get("meta") or {}).get("ai_why") or (h.get("meta") or {}).get("why", "")
+                best.append(f"{h.get('label', '')} à {h['peak']:.0f}s"
+                            + (f" : {why}" if why else ""))
         prompt = (
             "Tu écris les textes à l'écran d'un montage gaming TikTok en français, style "
-            "punchy. Événements détectés dans la vidéo « " + stem + " » :\n"
-            + "\n".join(events) +
-            "\nRéponds UNIQUEMENT en JSON : {\"hook\": \"accroche de 3 à 6 mots\", "
+            "punchy. Meilleurs moments de la vidéo « " + stem + " » (le premier ouvre le "
+            "Short) :\n" + "\n".join(best) + "\nÉvénements détectés :\n" + "\n".join(events) +
+            "\nL'accroche (3 à 7 mots) est une promesse ou une question sur le premier moment, "
+            "sans le dévoiler (ex. « 1 contre 4… », « Il aurait dû rester caché »)."
+            "\nRéponds UNIQUEMENT en JSON : {\"hook\": \"accroche de 3 à 7 mots\", "
             "\"captions\": [\"mot d'impact de 1 à 3 mots\", ...6 éléments], "
             "\"title\": \"titre court pour YouTube\"}. Pas de hashtags, pas d'emoji. "
             "N'invente pas de kill ni de victoire : décris l'action.")

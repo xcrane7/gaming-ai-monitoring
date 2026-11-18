@@ -392,12 +392,16 @@ class Renderer:
         subtitle_origin = "none"
         if cues_by_source:
             cues = subs.remap_cues(plan, cues_by_source)
-            word_style = is_styled and self.cfg["subtitles"].get("style", "words") == "words"
+            word_style = is_styled and self.cfg["subtitles"].get("style", "words") in (
+                "words", "tiktok")
             if cues and word_style:  # sous-titres animés mot à mot dans la couche graphique
                 words = subs.words_from_cues(cues)
+                # pas de sous-titre pendant les 0,3 s d'un impact : on laisse voir l'action
+                mute = [[round(g["start"], 3), round(g["start"] + 0.3, 3)] for g in plan.graphics
+                        if g["type"] in ("explosion", "sparks", "headshot", "victory")]
                 plan.graphics = [g for g in plan.graphics if g["type"] != "captions"] + [
                     {"type": "captions", "start": words[0]["t0"], "end": words[-1]["t1"],
-                     "words": words}]
+                     "words": words, "mute": mute}]
                 subtitle_origin = f"{len(cues)} répliques, {len(words)} mots animés"
             elif cues:
                 ass_name = "subs.ass"

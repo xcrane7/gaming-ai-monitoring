@@ -66,6 +66,7 @@ DEFAULTS: dict[str, Any] = {
         "bounds": "adaptive",  # "adaptive" (suit l'action) ou "fixed" (pre_roll/post_roll)
         "lead_min": 0.8, "lead_max": 3.5, "tail_max": 4.0,
         "loop_ending": True,  # fin coupée net pour que la relecture TikTok enchaîne
+        "hook_text": "auto",  # "auto" (Claude ou modèle selon le moment) | "off" | "texte fixe"
     },
     "long": {
         "enabled": True,
@@ -120,7 +121,7 @@ DEFAULTS: dict[str, Any] = {
         # "auto" : .srt à côté de la vidéo source s'il existe, sinon Whisper local
         # (faster-whisper) s'il est installé, sinon aucun sous-titre.
         "mode": "auto",  # "auto" | "sidecar" | "whisper" | "off"
-        "style": "words",  # "words" : animés mot à mot (montage stylé) | "classic" : ASS
+        "style": "words",  # "words" / "tiktok" : mot à mot animé | "classic" : ASS simple
         "whisper_model": "small",
         "language": None,
         "font_size": 16,

@@ -96,6 +96,22 @@ def load_font(name: str, size: int) -> ImageFont.FreeTypeFont:
 # ---------------------------------------------------------------------------
 
 
+# Zone sûre d'un écran vertical TikTok / Shorts / Reels (fractions de l'image) : en haut les
+# onglets, en bas le pseudo et la description, à droite la colonne de boutons (j'aime,
+# commentaires...). Aucun texte ne doit y tomber.
+SAFE_TOP, SAFE_BOTTOM = 0.08, 0.82
+SAFE_BUTTONS = (0.86, 0.40, 0.85)  # x minimal, y min, y max de la colonne de boutons
+TEXT_CENTER_X = 0.47  # texte centré un peu à gauche pour éviter les boutons
+TEXT_MAX_WIDTH = 0.74
+
+
+def text_box(ctx: "Context") -> tuple[float, float]:
+    """(centre x, largeur max) en pixels pour un texte centré, selon le format."""
+    if ctx.vertical:
+        return ctx.width * TEXT_CENTER_X, ctx.width * TEXT_MAX_WIDTH
+    return ctx.width / 2, ctx.width * 0.9
+
+
 def hex_rgb(value: str) -> tuple[int, int, int]:
     value = value.lstrip("#")
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
@@ -300,7 +316,7 @@ class Word(Element):
                              (0, 0, 0, 255), glow=c.color(it.get("color", "accent"), 150),
                              glow_radius=max(4, size // 10), shadow=max(2, size // 18))
         style = it.get("style", "pop")
-        x, y = it.get("pos", [0.5, 0.62])
+        x, y = it.get("pos", [TEXT_CENTER_X if c.vertical else 0.5, 0.56])
         cx, cy = x * c.width, y * c.height
         enter, leave = _life(t, self.start, self.end, 0.22, 0.18)
         angle = float(it.get("angle", 0))
@@ -320,7 +336,7 @@ class Word(Element):
         # un texte long (souvent écrit par l'IA) est réduit pour tenir dans 90 % de la largeur
         rad = math.radians(abs(angle))
         width = sprite.width * math.cos(rad) + sprite.height * math.sin(rad)
-        fit = c.width * 0.9 / max(width, 1)
+        fit = text_box(c)[1] / max(width, 1)
         if style == "slide":
             paste(canvas, sprite, cx, cy, min(scale, fit), angle, alpha)
         else:  # le grossissement d'entrée peut dépasser, la taille finale non
@@ -341,7 +357,7 @@ class Hook(Element):
             fill = (0, 0, 0, 255) if i == key else c.color("text")
             sprites.append(text_sprite(w, c.font, size, fill, 0 if i == key else max(3, size // 12),
                                        (0, 0, 0, 255), shadow=0 if i == key else max(2, size // 16)))
-        max_w = c.width * 0.86
+        cx0, max_w = text_box(c)
         lines, line, lw = [], [], 0.0
         for i, sp in enumerate(sprites):
             if line and lw + sp.width > max_w:
@@ -351,16 +367,20 @@ class Hook(Element):
             lw += sp.width + size * 0.15
         if line:
             lines.append(line)
-        top = c.height * (0.14 if c.vertical else 0.1)
+        top = c.height * (0.16 if c.vertical else 0.1)
+        reprise = bool(it.get("reprise"))  # fin en boucle : l'accroche revient, sans sortie
         _, leave = _life(t, self.start, self.end, 0.1, 0.25)
+        if reprise:
+            leave = 0.0
+        stagger = 0.0 if reprise else 0.09
         for li, idxs in enumerate(lines):
             total = sum(sprites[i].width for i in idxs) + size * 0.15 * (len(idxs) - 1)
-            x = (c.width - total) / 2
+            x = cx0 - total / 2
             y = top + li * size * 1.15
             for i in idxs:
                 sp = sprites[i]
-                appear = self.start + 0.09 * i
-                p = min(1.0, max(0.0, (t - appear) / 0.25))
+                appear = self.start + stagger * i
+                p = min(1.0, max(0.0, (t - appear) / (0.15 if reprise else 0.25)))
                 if p <= 0:
                     x += sp.width + size * 0.15
                     continue
@@ -393,8 +413,13 @@ class Notify(Element):
         margin = 32 * s
         y = (c.height * (0.34 if c.vertical else 0.08)) + slot * (h + 12 * s)
         enter, leave = _life(t, self.start, self.end, 0.28, 0.25)
-        x_end = c.width - margin - w
-        x = x_end + (1 - ease_out_back(enter, 1.4)) * (w + margin * 2) + ease_in_cubic(leave) * (w + margin * 2)
+        if c.vertical:  # entre par la gauche : la colonne de boutons TikTok est à droite
+            x = margin - (1 - ease_out_back(enter, 1.4)) * (w + margin * 2) \
+                - ease_in_cubic(leave) * (w + margin * 2)
+        else:
+            x_end = c.width - margin - w
+            x = x_end + (1 - ease_out_back(enter, 1.4)) * (w + margin * 2) \
+                + ease_in_cubic(leave) * (w + margin * 2)
         alpha = int(235 * (1 - leave))
         card = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
         cd = ImageDraw.Draw(card)
@@ -449,8 +474,8 @@ class Combo(Element):
         num = text_sprite(f"x{n}", c.font, int(size * 1.3), c.color("accent"),
                           max(4, size // 10), (0, 0, 0, 255), glow=c.color("accent", 160),
                           glow_radius=8, shadow=4)
-        x = c.width * (0.82 if c.vertical else 0.9)
-        y = c.height * (0.5 if c.vertical else 0.45)
+        x = c.width * (0.2 if c.vertical else 0.9)
+        y = c.height * (0.46 if c.vertical else 0.45)
         slide = (1 - ease_out_cubic(enter)) * c.width * 0.3
         alpha = 1 - leave
         paste(canvas, label, x + slide, y - size * 0.75, 1, -6, alpha)
@@ -786,10 +811,13 @@ class Captions(Element):
     """Sous-titres mot à mot : 1 à 3 mots à l'écran, le mot prononcé grossit et prend
     la couleur d'accent (style karaoké des Shorts)."""
     layer = 8
-    MAX_WORDS, MAX_CHARS = 3, 16
+    MAX_WORDS, MAX_CHARS = 4, 22
+    KEYWORDS = {"kill", "kills", "headshot", "clutch", "ace", "gg", "victoire", "victory",
+                "boom", "mort", "top", "win", "noob", "quoi", "non", "oui"}
 
     def __init__(self, item, ctx):
         super().__init__(item, ctx)
+        self.mute = [tuple(m) for m in item.get("mute", [])]  # impacts : on laisse voir l'action
         words = item.get("words", [])
         self.chunks: list[list[dict]] = []
         cur: list[dict] = []
@@ -804,24 +832,35 @@ class Captions(Element):
         if cur:
             self.chunks.append(cur)
 
+    @classmethod
+    def is_keyword(cls, word: str) -> bool:
+        """Chiffres, cris (« NON !! ») et mots du jeu : en couleur secondaire."""
+        bare = "".join(ch for ch in word if ch.isalnum()).lower()
+        return (any(ch.isdigit() for ch in word) or bare in cls.KEYWORDS
+                or (len(bare) >= 2 and word.isupper()) or word.count("!") >= 2)
+
     def draw(self, canvas, draw, t):
         c = self.ctx
+        if any(a <= t <= b for a, b in self.mute):
+            return
         chunk = next((ch for ch in self.chunks if ch[0]["t0"] <= t <= ch[-1]["t1"] + 0.15), None)
         if not chunk:
             return
-        size = int((74 if c.vertical else 58) * c.s)
-        y = c.height * (0.74 if c.vertical else 0.84)
+        size = int((66 if c.vertical else 54) * c.s)
+        y = c.height * (0.68 if c.vertical else 0.84)
         gap = size * 0.2
         sprites = []
         for w in chunk:
             active = w["t0"] <= t < w["t1"] + 0.02
-            fill = c.color("accent") if active else c.color("text")
+            fill = (c.color("accent") if active else
+                    c.color("accent2") if self.is_keyword(w["w"]) else c.color("text"))
             sprites.append((w, active, text_sprite(w["w"].upper(), c.font, size, fill,
-                                                   max(4, size // 9), (0, 0, 0, 255),
-                                                   shadow=max(2, size // 14))))
+                                                   max(4, min(6, size // 12)), (0, 0, 0, 255),
+                                                   shadow=max(2, size // 16))))
         total = sum(sp.width for _, _, sp in sprites) + gap * (len(sprites) - 1)
-        scale_fit = min(1.0, c.width * 0.9 / max(total, 1))
-        x = (c.width - total * scale_fit) / 2
+        cx, max_w = text_box(c)
+        scale_fit = min(1.0, max_w / max(total, 1))
+        x = cx - total * scale_fit / 2
         enter = ease_out_back(min(1.0, (t - chunk[0]["t0"]) / 0.18), 2.0)
         for w, active, sp in sprites:
             pop = 1.0

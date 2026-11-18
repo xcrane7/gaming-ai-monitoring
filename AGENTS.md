@@ -29,7 +29,7 @@ Lis d'abord `README.md` puis `docs/ENGINES.md` (architecture des dix moteurs).
 3. **Ne rien supprimer qui fonctionne.** Le mode simple (`"style": {"enabled": false}`) et
    le second essai « prudent » doivent continuer à marcher.
 4. **Ne jamais déclarer une fonctionnalité terminée sans l'avoir testée** :
-   `python -m pytest tests` doit passer (environ 17 minutes ; un fichier précis :
+   `python -m pytest tests` doit passer (environ 18 minutes ; un fichier précis :
    `python -m pytest tests/test_engines.py`).
 5. Ajouter un test pour chaque nouvelle fonctionnalité, sur des vidéos générées par
    `gaming_ai_editor/synth.py` plutôt que sur des fichiers externes.

@@ -65,6 +65,19 @@ NOTIFY = {
 }
 HOOKS = ["Attends la fin", "Regarde bien ça", "Personne ne s'attendait à ça",
          "Ça part trop loin", "Le meilleur moment de la partie"]
+# Accroches locales (sans IA) selon la nature du meilleur moment : une promesse ou une question
+HOOK_TEMPLATES = {
+    "kill": ["Il ne l'a pas vu venir", "Un contre tous…", "Regarde ce qu'il fait"],
+    "headshot": ["Une balle, pas deux", "Le tir parfait ?", "Il vise où, là ?"],
+    "clutch": ["Il reste 1 PV…", "Personne n'y croyait", "Impossible de s'en sortir ?"],
+    "fail": ["Il aurait dû rester caché", "Ça ne pouvait pas mal tourner…", "Mauvaise idée"],
+    "drôle": ["Je ne m'y attendais pas", "Attends la fin", "Qu'est-ce qui vient de se passer ?"],
+    "victoire": ["Tout se joue ici", "La dernière manche…", "Il ne reste que lui"],
+    "série": ["Il enchaîne tout le monde", "Impossible de l'arrêter", "Et ça continue…"],
+    "surprise": ["Personne ne l'a vu venir", "D'un coup…", "Écoute bien"],
+    "réaction": ["Sa réaction…", "Il ne s'y attendait pas", "Écoute bien"],
+}
+EVENT_PRIORITY = {"victory": 0, "headshot": 1, "notify": 2, "combo": 3, "word": 4}
 SEMANTIC = {"kill", "headshot", "clutch", "victoire", "fail", "drôle"}
 
 
@@ -213,14 +226,14 @@ class Director:
                 if {"shake", "glitch", "distortion"} & set(fx):
                     last_heavy = ev["t"]
                 label = ev.get("label")
-                if label in ("kill", "headshot"):
+                if label in ("kill", "headshot", "clutch"):
                     fx += ["notify", "sfx_ding"] + (["headshot_gfx"] if label == "headshot" else [])
                 elif label == "victoire":
                     fx += ["victory_gfx"]
                 elif label == "fail":
                     fx += ["glitch", "sfx_glitch"]
-                elif kind in ("explosion", "impact", "shot", "burst") and force >= 0.45:
-                    fx += ["notify"]
+                # pas de notification générique (« Explosion », « Impact ») : elle doublonne
+                # le mot d'impact ; la carte façon kill feed est réservée aux vraies étiquettes
                 ev["fx"] = fx
                 ev["force"] = round(min(1.0, 0.5 + 0.6 * force) * k, 3)
             seg.events = chosen
@@ -482,13 +495,16 @@ class Director:
             g.append({"type": "hud", "start": 0.0, "end": D})
         if self.short:
             g.append({"type": "progress", "start": 0.0, "end": D})
-            hook = self.texts.get("hook") or self.rng.choice(HOOKS)
-            plan.hook = str(hook)[:48]
+            plan.hook = self.choose_hook()
             teaser = plan.segments[0].out_duration if plan.segments[0].role == "teaser" else 0.0
             hook_end = min(max(2.8, teaser + 0.6), D * 0.3)
-            g.append({"type": "hook", "start": 0.1, "end": hook_end, "text": plan.hook})
-            for w in range(len(plan.hook.split())):
-                cues.append({"t": 0.1 + 0.09 * w, "kind": "swoosh", "gain": 0.5})
+            if plan.hook:
+                g.append({"type": "hook", "start": 0.1, "end": hook_end, "text": plan.hook})
+                for w in range(len(plan.hook.split())):
+                    cues.append({"t": 0.1 + 0.09 * w, "kind": "swoosh", "gain": 0.5})
+                if plan.loop and D > hook_end + 3:  # boucle : l'accroche revient à la fin
+                    g.append({"type": "hook", "start": round(D - 0.9, 3), "end": D,
+                              "text": plan.hook, "reprise": True})
         else:
             title = self.texts.get("title") or "Meilleurs moments"
             g.append({"type": "title", "start": 0.3, "end": 3.3, "text": str(title)[:40],
@@ -511,7 +527,10 @@ class Director:
             if lap >= 0.15:
                 cues.append({"t": jt, "kind": "whoosh", "gain": 0.8,
                              "pan": self.rng.uniform(-0.5, 0.5)})
-        last_word, slots = -10.0, []
+        last_word, slots, worded = -10.0, [], set()
+        # pendant l'accroche, pas de mot d'impact : deux gros textes à la fois se lisent mal
+        hook_until = max([x["end"] for x in g if x["type"] == "hook" and not x.get("reprise")],
+                         default=0.0)
         captions = list(self.texts.get("captions") or [])
         for i, seg in enumerate(plan.segments):
             a = self.by_path.get(seg.source, {})
@@ -550,14 +569,16 @@ class Director:
                               "icon": ic, "slot": slot})
                 word_gap = 1.6 if self.short else 3.0
                 big = "climax" in fx or ev.get("label") in SEMANTIC or ev.get("strength", 0) > 0.6
-                if t - last_word >= word_gap and (self.short or big) \
+                if t - last_word >= word_gap and (self.short or big) and i not in worded \
+                        and not (hook_until and t < hook_until) \
                         and "headshot_gfx" not in fx and "victory_gfx" not in fx:
+                    worded.add(i)  # une légende d'événement par clip au maximum
                     text = captions.pop(0) if captions else self._word(ev.get("label") or ev["kind"])
                     style = "slam" if "climax" in fx or ev["kind"] == "explosion" else \
                         self.rng.choice(["pop", "pop", "slide"])
                     g.append({"type": "word", "start": t, "end": t + (1.4 if "climax" in fx else 1.0),
                               "text": str(text)[:22], "style": style,
-                              "pos": [0.5, 0.64 if vertical else 0.7],
+                              "pos": [0.47, 0.56] if vertical else [0.5, 0.7],
                               "angle": dna["word_angle"] * (1 if len(g) % 2 else -1),
                               "size": 150 if "climax" in fx else 120})
                     last_word = t
@@ -578,8 +599,51 @@ class Director:
         if self.short and st.get("subscribe_outro", True) and D > 8 and not plan.loop:
             g.append({"type": "subscribe", "start": D - 2.6, "end": D - 0.1})
             cues.append({"t": D - 2.6 + 0.85, "kind": "click", "gain": 0.8})
-        plan.graphics = sorted(g, key=lambda x: x["start"])
+        plan.graphics = self.one_event_text_at_a_time(sorted(g, key=lambda x: x["start"]))
         plan.sfx = sorted(cues, key=lambda x: x["t"])
+
+    def choose_hook(self) -> str:
+        """Accroche : texte imposé, désactivée, Claude, ou modèle local selon le meilleur moment."""
+        setting = self.cfg["short"].get("hook_text", "auto")
+        if setting == "off":
+            return ""
+        if setting not in ("auto", "", None):
+            return str(setting)[:48]
+        if self.texts.get("hook"):
+            return str(self.texts["hook"])[:48]
+        best = max(self.plan.segments, key=lambda sg: sg.score)
+        labels = [e.get("label") for e in best.events if e.get("label")] + [best.label or ""]
+        for label in labels:
+            key = "série" if label.startswith("série") else label
+            if key in HOOK_TEMPLATES:
+                return self.rng.choice(HOOK_TEMPLATES[key])
+        return self.rng.choice(HOOKS)
+
+    @staticmethod
+    def one_event_text_at_a_time(items: list[dict]) -> list[dict]:
+        """Jamais deux textes d'événement à l'écran en même temps : le plus important reste
+        (victoire > headshot > notification > combo > mot d'impact)."""
+        kept: list[dict] = []
+        events = sorted((x for x in items if x["type"] in EVENT_PRIORITY),
+                        key=lambda x: (EVENT_PRIORITY[x["type"]], x["start"]))
+        for item in events:
+            if all(item["end"] <= k["start"] or item["start"] >= k["end"] for k in kept):
+                kept.append(item)
+        others = [x for x in items if x["type"] not in EVENT_PRIORITY]
+        return sorted(others + kept, key=lambda x: x["start"])
+
+    def end_on_beat(self) -> None:
+        """Fin sèche sur un temps fort : la durée totale tombe sur un temps de la musique."""
+        m = self.plan.music
+        if not self.plan.loop or not m.get("bpm") or not self.plan.segments:
+            return
+        beat = 60.0 / float(m["bpm"])
+        last = self.plan.segments[-1]
+        floor = max([last.start + 1.5] + [e["t"] + 0.6 for e in last.events]
+                    + ([last.ramp[1] + 0.5] if last.ramp else []))
+        excess = self.plan.duration % beat
+        if excess > 1e-3 and last.end - excess >= floor:
+            last.end = round(last.end - excess, 6)
 
     @staticmethod
     def _burst_hits(analysis: dict, burst: dict) -> list[float]:
@@ -616,6 +680,7 @@ class Director:
         self.plan_music()
         if self.short:
             self.vary_durations()
+            self.end_on_beat()
         self.build_camera()
         self.finalize_music()
         self.build_graphics_and_sound()

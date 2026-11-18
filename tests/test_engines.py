@@ -403,8 +403,8 @@ def test_word_captions_from_subtitles(cfg, tmp_path):
     assert timed[1]["t0"] == 1.5, "horodatage réel par mot (Whisper) prioritaire"
     caps = graphics.Captions({"type": "captions", "start": 1, "end": 4, "words": words},
                              graphics.Context(360, 640, 30, 5))
-    # 16 caractères au plus à l'écran : « Attention il arrive » (19) est coupé en deux
-    assert [[w["w"] for w in c] for c in caps.chunks] == [["Attention", "il"], ["arrive"],
+    # 4 mots et 22 caractères au plus par ligne ; jamais à cheval sur deux répliques
+    assert [[w["w"] for w in c] for c in caps.chunks] == [["Attention", "il", "arrive"],
                                                           ["Boom"]]
     # rendu réel : les légendes passent dans la couche graphique
     src = tmp_path / "s.mp4"
