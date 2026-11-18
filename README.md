@@ -16,7 +16,9 @@ payante. Les vidéos originales ne sont jamais modifiées, déplacées ni suppri
    OpenCV, propose d'installer FFmpeg (via winget) puis inspecte ta machine (GPU, NVENC…).
 3. Double-clique `start.bat` : le dashboard s'ouvre sur <http://127.0.0.1:8765>.
 4. Dépose une vidéo dans `INPUT\`. Les rendus arrivent dans `OUTPUT\shorts\` et
-   `OUTPUT\youtube\`, avec un rapport dans `OUTPUT\reports\`.
+   `OUTPUT\youtube\`, avec un rapport dans `OUTPUT\reports\` et, pour la publication,
+   `OUTPUT\reports\<vidéo>.metadata.json` : 3 titres, description prête à coller avec les
+   chapitres et les hashtags, et une miniature PNG 1280×720 (visible dans le dashboard).
 
 Optionnel :
 
@@ -186,7 +188,7 @@ cadrage vertical `crop` / `blur` / `hybrid`, encodeur, musique, sous-titres, che
 
 ```
 pip install pytest
-python -m pytest tests                      95 tests, environ 19 minutes
+python -m pytest tests                      100 tests, environ 20 minutes
 GAE_TEST_NETWORK=1 python -m pytest tests   ajoute le cycle de recherche en ligne
 ```
 
@@ -195,7 +197,7 @@ d'action et les changements de plan, ce qui permet de vérifier objectivement la
 
 ## État des vérifications
 
-Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 95 tests :
+Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 100 tests :
 
 - montage complet d'un vrai gameplay FPS 4K : Short 1080×1920 de 43,5 s, 20 contrôles QA
   réussis, impacts sonores à 1 ms de l'instant prévu, originaux intacts ;
@@ -210,6 +212,11 @@ Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) �
 - registre : statuts, refus d'activer une version moins bonne, quarantaine et retour arrière ;
 - chercheur : réglages du motion design et décodage GPU mesurés, cycle limité dans le temps,
   cycle en ligne complet (découverte, bac à sable, licences) ;
+- emballage YouTube : chapitres tirés du plan réel (00:00, 10 s d'écart, titres parlants),
+  réponse de Claude validée avec une seule nouvelle tentative puis repli local, miniature
+  1280×720 prise dans la source au pic du meilleur moment ;
+- relecture critique (`python -m gaming_ai_editor.tools.critic <rendu> --before <ancien>`) :
+  métriques, images clés, grille sur 10 en 9 lignes, comparaison avant/après ;
 - toutes les vérifications de la version précédente (formats, QA, surveillance, dashboard,
   garde-fou des coûts, repli CPU).
 

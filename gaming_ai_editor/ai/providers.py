@@ -386,7 +386,8 @@ def qualify_moments(cfg, guard: CostGuard, analysis: dict, work: Path, log=print
 
 
 class ClaudeDirector:
-    """Titre, description et hashtags proposés par Claude (CLI de l'abonnement)."""
+    """Textes du montage écrits par Claude (CLI de l'abonnement). L'emballage YouTube
+    (titres, description, chapitres) est dans packaging.py."""
 
     def __init__(self, cfg, guard: CostGuard, log=print):
         self.cfg, self.guard, self.log = cfg, guard, log
@@ -394,16 +395,6 @@ class ClaudeDirector:
 
     def available(self) -> bool:
         return self.conf["mode"] in ("auto", "cli") and bool(shutil.which(self.conf["command"]))
-
-    @staticmethod
-    def local_metadata(stem: str, plans: dict) -> dict:
-        title = stem.replace("_", " ").replace("-", " ").strip().title() or "Gameplay"
-        return {
-            "title": f"{title} — Meilleurs moments",
-            "description": "Montage automatique des meilleurs moments de la session.",
-            "hashtags": ["#gaming", "#gameplay", "#highlights", "#shorts"],
-            "source": "local",
-        }
 
     def creative_texts(self, stem: str, analyses: list[dict]) -> dict:
         """Accroche, mots d'impact et titre écrits par Claude. {} si indisponible.
@@ -449,39 +440,3 @@ class ClaudeDirector:
         self.log("Textes du montage écrits par Claude.")
         return {"short": {"hook": hook, "captions": caps} if hook else {"captions": caps},
                 "long": {"title": title} if title else {}}
-
-    def metadata(self, stem: str, plans: dict) -> dict:
-        meta = self.local_metadata(stem, plans)
-        if not self.available():
-            return meta
-        if not self.guard.authorize("claude", "titre et description", "subscription_cli"):
-            return meta
-        moments = []
-        for fmt, plan in plans.items():
-            for seg in plan["segments"][:12]:
-                moments.append(f"{fmt}: {seg['label'] or 'action'} à {seg['peak']:.0f}s "
-                               f"(score {seg['score']:.2f})")
-        prompt = (
-            "Tu es le directeur éditorial d'une chaîne gaming. Propose un titre accrocheur "
-            "(max 70 caractères), une description (max 300 caractères) et 5 hashtags pour "
-            f"une vidéo issue du fichier « {stem} ». Moments retenus :\n" + "\n".join(moments) +
-            '\nRéponds UNIQUEMENT en JSON : {"title": "...", "description": "...", '
-            '"hashtags": ["#..."]}')
-        try:
-            extra = ["--model", self.conf["model"]] if self.conf.get("model") else []
-            # dossier de travail neutre : Claude ne charge pas le contexte du projet
-            data = extract_json(run_cli(self.conf["command"], prompt,
-                                        int(self.conf["timeout"]), extra,
-                                        cwd=self.cfg.work_dir))
-            if isinstance(data, dict) and isinstance(data.get("title"), str) and data["title"]:
-                meta["title"] = data["title"][:100]
-                if isinstance(data.get("description"), str):
-                    meta["description"] = data["description"][:500]
-                tags = data.get("hashtags")
-                if isinstance(tags, list) and tags:
-                    meta["hashtags"] = [str(t)[:40] for t in tags[:8]]
-                meta["source"] = "claude"
-        except Exception as exc:
-            self.log(f"Claude indisponible ({type(exc).__name__}: {str(exc)[:120]}) : "
-                     "métadonnées locales conservées.")
-        return meta

@@ -76,6 +76,7 @@ def build_state(orch: Orchestrator, scheduler=None) -> dict:
                          "ON v.id = j.video_id ORDER BY j.id DESC LIMIT 25"),
         "videos": videos,
         "renders": renders,
+        "packages": packages(cfg),
         "research": {
             "enabled": bool(cfg["research"]["enabled"]),
             "scheduler": scheduler is not None,
@@ -92,6 +93,35 @@ def build_state(orch: Orchestrator, scheduler=None) -> dict:
         "events": db.query("SELECT at, level, source, message FROM events "
                            "ORDER BY id DESC LIMIT 60"),
     }
+
+
+def packages(cfg, limit: int = 10) -> list[dict]:
+    """Emballages YouTube (OUTPUT/reports/<vidéo>.metadata.json), du plus récent au plus ancien."""
+    out = []
+    files = sorted((cfg.output_dir / "reports").glob("*.metadata.json"),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    for f in files[:limit]:
+        data = _loads(f.read_text(encoding="utf-8"), None)
+        if not isinstance(data, dict):
+            continue
+        thumb = (data.get("thumbnail") or {}).get("path")
+        data["id"] = f.name[: -len(".metadata.json")]
+        data["has_thumbnail"] = bool(thumb and Path(thumb).is_file())
+        out.append(data)
+    return out
+
+
+def package_thumbnail(cfg, pkg_id: str) -> Path | None:
+    """Miniature d'un emballage, seulement si elle est bien dans OUTPUT (pas de chemin arbitraire)."""
+    f = cfg.output_dir / "reports" / f"{pkg_id}.metadata.json"
+    if "/" in pkg_id or "\\" in pkg_id or not f.is_file():
+        return None
+    thumb = (_loads(f.read_text(encoding="utf-8"), {}).get("thumbnail") or {}).get("path")
+    if not thumb:
+        return None
+    path = Path(thumb).resolve()
+    root = cfg.output_dir.resolve()
+    return path if path.is_file() and root in path.parents else None
 
 
 def video_timeline(orch: Orchestrator, video_id: int) -> dict | None:
@@ -175,6 +205,14 @@ class Handler(BaseHTTPRequestHandler):
             elif m := re.fullmatch(r"/api/video/(\d+)/timeline", path):
                 data = video_timeline(self.orch, int(m.group(1)))
                 self._json(data or {"error": "analyse indisponible"}, 200 if data else 404)
+            elif m := re.fullmatch(r"/thumbnail/([^/]+)", path):
+                from urllib.parse import unquote
+
+                thumb = package_thumbnail(self.orch.cfg, unquote(m.group(1)))
+                if thumb:
+                    self._file(thumb, "image/png")
+                else:
+                    self._json({"error": "miniature introuvable"}, 404)
             elif m := re.fullmatch(r"/media/(\d+)", path):
                 row = self.orch.db.one("SELECT path FROM renders WHERE id=?", (int(m.group(1)),))
                 if row:

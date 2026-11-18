@@ -69,7 +69,12 @@ Structure d'un Short (`short.structure = "story"`) : cold open de 1,5 à 2 s sur
 moment (coupé avant sa résolution, avec l'accroche), montée chronologique en coupes sèches,
 clips sans action retirés, durées variées (jamais deux à ±20 % de suite), climax en entier à la
 fin avec ralenti et drop, fin en boucle. Bornes de chaque clip adaptées à l'action
-(`_adaptive_bounds`). Outil de relecture : `python -m gaming_ai_editor.tools.critic`.
+(`_adaptive_bounds`). Outil de relecture : `python -m gaming_ai_editor.tools.critic`
+(métriques, images clés, grille /10, avant/après ; skill `edit-critic`).
+
+Emballage de publication : `gaming_ai_editor/packaging.py` (skill `youtube-packaging`) écrit
+`OUTPUT/reports/<vidéo>.metadata.json` après la QA : 3 titres, description, chapitres du plan
+long, hashtags, miniature PNG. Claude (CLI) si disponible, réponse validée, sinon modèles locaux.
 
 Règles anti-saturation : deux effets lourds (tremblement, glitch, distorsion)
 jamais à moins de 1,5 s ; un mot d'impact au plus toutes les 1,6 s en court,

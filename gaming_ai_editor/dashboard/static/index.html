@@ -90,6 +90,7 @@ code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);padding:1
     <div class="tiles" id="tiles"></div>
     <h2>File de traitement</h2><div id="jobs"></div>
     <h2>Rendus</h2><div class="grid" id="renders"></div>
+    <h2>Publication YouTube</h2><div class="grid" id="packages"></div>
   </section>
   <section id="videos"><h2>Vidéos détectées dans INPUT</h2><div id="videolist"></div></section>
   <section id="research">
@@ -162,6 +163,15 @@ function renderMontage(s){
       <ul class="checks">${(r.qa_report.checks || []).map(c => `<li><span class="s ${esc(c.status)}">${c.status === "pass" ? "✓" : c.status === "warn" ? "!" : "✕"}</span><span><b>${esc(c.name)}</b> — ${esc(c.detail)}</span></li>`).join("")}</ul>
       ${r.notes.map(n => `<div class="sub">${esc(n)}</div>`).join("")}<div class="sub"><code>${esc(r.path)}</code></div></details></div>`).join("")
     : `<div class="empty">Aucun rendu pour l'instant.</div>`;
+  $("packages").innerHTML = (s.packages || []).length ? s.packages.map(p => `
+    <div class="card">${p.has_thumbnail ? `<img src="/thumbnail/${encodeURIComponent(p.id)}" alt="Miniature ${esc(p.id)}" style="width:100%;border-radius:8px;aspect-ratio:16/9;object-fit:cover">` : ""}
+      <div class="name" style="margin-top:6px">${esc(p.id)}${p.game ? " · " + esc(p.game) : ""}</div>
+      <div class="row" style="margin:6px 0"><span class="badge fmt">${p.source === "claude" ? "Écrit par Claude" : "Modèles locaux"}</span></div>
+      <ol class="sub" style="padding-left:18px;margin:4px 0">${(p.titles || []).map(t => `<li>${esc(t)}</li>`).join("")}</ol>
+      <details><summary>Description, chapitres, hashtags</summary>
+      <pre class="sub" style="white-space:pre-wrap;user-select:all">${esc(p.description_full || p.description)}</pre>
+      <div class="sub">Miniature : « ${esc((p.thumbnail || {}).text)} »${(p.thumbnail || {}).frame_time != null ? " à " + p.thumbnail.frame_time + " s" : ""} · accroche Short : « ${esc(p.short_hook)} »</div></details></div>`).join("")
+    : `<div class="empty">Les titres, chapitres et miniatures apparaîtront ici après le premier montage.</div>`;
   document.querySelectorAll("details[data-render]").forEach(d => d.ontoggle = () => { const id = +d.dataset.render; const had = openRender.has(id); d.open ? openRender.add(id) : openRender.delete(id); if (d.open !== had) renderMontage(state); });
 }
 function timelineSvg(t){
@@ -221,7 +231,7 @@ async function refresh(){
   try {
     const r = await fetch("/api/state"); const s = state = await r.json();
     renderChips(s);
-    once("montage", JSON.stringify([s.jobs, s.renders, s.videos.length, s.research.skills.length]), () => renderMontage(s));
+    once("montage", JSON.stringify([s.jobs, s.renders, s.packages, s.videos.length, s.research.skills.length]), () => renderMontage(s));
     once("videos", JSON.stringify(s.videos), () => renderVideos(s));
     once("research", JSON.stringify([s.research, Math.round(s.now / 60)]), () => renderResearch(s));
     once("system", JSON.stringify([s.environment, s.ai, s.ai_calls, s.events, s.assets]), () => renderSystem(s));

@@ -435,3 +435,14 @@ def test_critic_tool_produces_frames_and_checklist(cfg, tmp_path):
     for key in ("planche", "clip1_milieu", "jonction1_avant", "avant_apres"):
         assert Path(rep["images"][key]).exists(), key
     assert isinstance(rep["checklist"], list) and rep["score_checklist"]
+    # grille /10 sur 9 lignes, chacune avec pourquoi, correction et fichier ; verdict < 8 seulement
+    lines = {g["ligne"] for g in rep["grille"]}
+    assert len(rep["grille"]) == 9 and {"accroche", "courbe d'intensité", "temps morts"} <= lines
+    assert all(0 <= g["note"] <= 10 and g["pourquoi"] and g["fichier"] for g in rep["grille"])
+    assert len(rep["verdict"]) <= 3 and 0 <= rep["note_globale"] <= 10
+    assert rep["métriques"]["clips"] == 2 and rep["métriques"]["durée"] > 8
+    assert Path(rep["images"]["images_clés"]).exists()
+    assert Path(rep["images"]["avant_apres_images_clés"]).exists()
+    assert set(rep["avant_après"]["grille"]) == lines
+    md = (tmp_path / "critique" / "critique.md").read_text(encoding="utf-8")
+    assert "accroche" in md and "/10" in md

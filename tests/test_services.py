@@ -414,14 +414,23 @@ def test_subscription_cli_enriches_and_bad_answers_fall_back(cfg, orch, media, t
     GeminiAnalyst(cfg, guard, lambda m: None).enrich(analysis, tmp_path / "frames2")
     assert json.dumps(analysis["highlights"]) == before, "réponse invalide = analyse inchangée"
 
-    plans = {"short": {"segments": [{"label": "kill", "peak": 12.0, "score": 3.0}]}}
-    cfg.data["ai"]["claude"] = {"mode": "cli", "timeout": 30, "model": None, "command": _stub(
-        tmp_path, "claude", '{"title": "Clutch 1v3", "description": "d", "hashtags": ["#fps"]}')}
-    meta = ClaudeDirector(cfg, guard, lambda m: None).metadata("match", plans)
-    assert meta == {"title": "Clutch 1v3", "description": "d", "hashtags": ["#fps"],
-                    "source": "claude"}
+    from gaming_ai_editor import packaging
+
+    good = {"titles": ["Le clutch 1 contre 3 que personne n'a vu venir",
+                       "Seul contre trois… et ça a marché",
+                       "La manche la plus folle de ma soirée"],
+            "description": "Une manche perdue d'avance.\nRegarde jusqu'au bout.",
+            "chapter_titles": [], "hashtags": ["#fps", "#gaming", "#clutch"],
+            "thumbnail": {"text": "1 CONTRE 3", "idea": "viseur"},
+            "short_hook": "Il restait seul contre trois"}
+    cfg.data["ai"]["claude"] = {"mode": "cli", "timeout": 30, "model": None,
+                                "command": _stub(tmp_path, "claude", json.dumps(good))}
+    director = ClaudeDirector(cfg, guard, lambda m: None)
+    pkg = packaging.ask_claude(director, "match", "", [], ["- kill"], 60, "fr", lambda m: None)
+    assert pkg["source"] == "claude" and pkg["titles"] == good["titles"]
     cfg.data["ai"]["claude"]["command"] = _stub(tmp_path, "claude2", "erreur")
-    assert ClaudeDirector(cfg, guard, lambda m: None).metadata("match", plans)["source"] == "local"
+    director = ClaudeDirector(cfg, guard, lambda m: None)
+    assert packaging.ask_claude(director, "match", "", [], [], 60, "fr", lambda m: None) is None
 
 
 # -- dashboard --------------------------------------------------------------------------
@@ -488,7 +497,13 @@ def test_youtube_package_and_tempo_matched_music(cfg, orch, media, tmp_path):
     yt = out["youtube"]
     times = [c["t"] for c in yt["chapters"]]
     assert times[0] == 0 and all(b - a >= 10 for a, b in zip(times, times[1:]))
-    assert yt["chapters_text"].startswith("0:00 Intro")
+    assert yt["chapters_text"].startswith("00:00 Intro")
+    assert "Moment" not in yt["chapters_text"], "titres de chapitre parlants"
     assert yt["chapters_text"] in report["metadata"]["description"]
     thumb = Path(yt["thumbnail"])
-    assert thumb.exists() and probe(thumb).width == 1280
+    assert thumb.suffix == ".png" and thumb.exists()
+    assert (probe(thumb).width, probe(thumb).height) == (1280, 720)
+    meta = json.loads(Path(report["metadata"]["metadata_path"]).read_text(encoding="utf-8"))
+    assert Path(report["metadata"]["metadata_path"]).name == "session.metadata.json"
+    assert len(meta["titles"]) == 3 and meta["source"] == "local"
+    assert meta["chapters"][0] == {"t": "00:00", "title": "Intro"}

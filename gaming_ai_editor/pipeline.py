@@ -14,6 +14,7 @@ import traceback
 from pathlib import Path
 
 from . import analysis as analysis_mod
+from . import packaging
 from .ai.providers import ClaudeDirector, CostGuard, qualify_moments
 from .config import VIDEO_EXTENSIONS, Config
 from .db import Database
@@ -239,15 +240,30 @@ class Orchestrator:
         finally:
             self.activity.end()
         intact = all(fingerprint(src) == fp for src, fp in originals.items())
-        meta = ClaudeDirector(self.cfg, self.guard, self.log).metadata(
-            stem, {o["format"]: o["plan"] for o in outputs})
-        for out in outputs:
-            if out["format"] == "long" and out["qa"]["status"] != FAIL:
-                package = self._youtube_package(out, meta)
-                out["youtube"] = package
-                if package.get("chapters_text"):
-                    meta["description"] = (meta.get("description", "").rstrip()
-                                           + "\n\n" + package["chapters_text"])
+        valid = [o for o in outputs if o["qa"]["status"] != FAIL]
+        pkg = None
+        if self.cfg["youtube"]["enabled"]:
+            try:
+                pkg = packaging.build(self.cfg, self.guard, self.log, stem, valid, analyses,
+                                      self.cfg.output_dir / "reports")
+            except Exception as exc:  # l'emballage ne doit jamais faire échouer un rendu
+                self.log(f"Emballage YouTube impossible : {exc}", "warn")
+        if pkg is None:
+            pkg = {**packaging.local_package(stem, "", [], "", ""), "chapter_seconds": [],
+                   "metadata_path": None}
+            pkg["description_full"] = pkg["description"] + "\n\n" + " ".join(pkg["hashtags"])
+            pkg["thumbnail"]["path"] = None
+        meta = {"title": pkg["titles"][0], "titles": pkg["titles"],
+                "description": pkg["description_full"], "hashtags": pkg["hashtags"],
+                "source": pkg["source"], "metadata_path": pkg["metadata_path"]}
+        for out in valid:
+            if out["format"] == "long":
+                out["youtube"] = {
+                    "chapters": [{"t": sec, "title": c["title"]} for sec, c in
+                                 zip(pkg["chapter_seconds"], pkg["chapters"])],
+                    "chapters_text": "\n".join(f"{c['t']} {c['title']}"
+                                               for c in pkg["chapters"]),
+                    "thumbnail": pkg["thumbnail"]["path"]}
         report = {
             "source": [a["path"] for a in analyses], "job_id": job_id,
             "metadata": meta, "originals_intact": intact,
@@ -259,56 +275,6 @@ class Orchestrator:
                                encoding="utf-8")
         report["report_path"] = str(report_path)
         return report
-
-    def _youtube_package(self, out: dict, meta: dict) -> dict:
-        """Chapitres (règles YouTube : 0:00 en premier, 10 s minimum entre deux) et miniature."""
-        from .editor.plan import EditPlan
-        from .engines import graphics
-
-        plan = EditPlan.from_dict(out["plan"])
-        offsets = plan.offsets()
-        chapters, last = [], -100.0
-        for i, (seg, off) in enumerate(zip(plan.segments, offsets)):
-            t = 0.0 if i == 0 else off
-            if i and (t - last < 10 or plan.duration - t < 10):
-                continue
-            label = (seg.label if seg.label not in ("", "menu", "source entière", "rien",
-                                                    "repère régulier") else "Action")
-            chapters.append({"t": round(t, 2), "title": "Intro" if i == 0 else
-                             f"Moment {len(chapters)} – {label.capitalize()}"})
-            last = t
-        text = "\n".join(f"{int(c['t'] // 60)}:{int(c['t'] % 60):02d} {c['title']}"
-                         for c in chapters) if len(chapters) >= 3 else ""
-        thumb = None
-        try:
-            best = max(range(len(plan.segments)), key=lambda k: plan.segments[k].score)
-            seg = plan.segments[best]
-            at = offsets[best] + seg.map_time(seg.peak)
-            thumb = Path(out["path"]).with_name(Path(out["path"]).stem + "_thumbnail.jpg")
-            raw = thumb.with_suffix(".frame.png")
-            from .ffutil import run_ffmpeg
-
-            run_ffmpeg(["-ss", f"{max(0.0, at):.2f}", "-i", out["path"], "-frames:v", "1",
-                        "-vf", "scale=1280:720:force_original_aspect_ratio=increase,"
-                        "crop=1280:720,eq=saturation=1.3:contrast=1.08", str(raw)])
-            from PIL import Image
-
-            img = Image.open(raw).convert("RGBA")
-            words = (meta.get("title") or "Meilleurs moments").upper().split()[:3]
-            ctx = graphics.Context(1280, 720, 30, 1, palette=plan.style.get("palette") or
-                                   graphics.Context(1, 1, 1, 1).palette,
-                                   font=plan.style.get("font") or "Impact")
-            sprite = graphics.text_sprite(" ".join(words), ctx.font, 118,
-                                          ctx.color("accent"), 10, (0, 0, 0, 255),
-                                          glow=(0, 0, 0, 200), glow_radius=12, shadow=8)
-            graphics.paste(img, sprite, 640, 600, min(1.0, 1180 / sprite.width), -3)
-            img.convert("RGB").save(thumb, quality=92)
-            raw.unlink(missing_ok=True)
-        except Exception as exc:
-            self.log(f"Miniature impossible : {exc}", "warn")
-            thumb = None
-        return {"chapters": chapters, "chapters_text": text,
-                "thumbnail": str(thumb) if thumb else None}
 
     def _music_info(self, stem: str, target_bpm: float | None = None) -> dict | None:
         """Musique fournie dans assets/music : celle dont le tempo colle le mieux à l'énergie

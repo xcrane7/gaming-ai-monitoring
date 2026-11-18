@@ -72,7 +72,9 @@
     "style.slowmo_audio": "keep_pitch (hauteur conservée) | deep (son grave façon bullet time)",
     "style.speed_up_dead_time": "accélère (×dead_time_speed) le plus long temps mort des clips de montée",
     "render.supersample": "1.15 : punch-in net (zoom dans une image plus grande) ; 1.0 = désactivé, plus rapide",
-    "long.jl_cuts": "secondes d avance du son à chaque coupe du format long (0 = désactivé)"
+    "long.jl_cuts": "secondes d avance du son à chaque coupe du format long (0 = désactivé)",
+    "youtube.game_name": "nom du jeu pour les titres et hashtags (sinon déduit du profil de jeu `games` ; jamais le nom de fichier)",
+    "youtube.enabled": "emballage YouTube : 3 titres, description, chapitres, hashtags, miniature PNG 1280x720 dans OUTPUT/reports/<vidéo>.metadata.json"
   },
   "analysis": {
     "rerank": true,
@@ -108,5 +110,9 @@
         ]
       }
     }
+  },
+  "youtube": {
+    "enabled": true,
+    "game_name": ""
   }
 }

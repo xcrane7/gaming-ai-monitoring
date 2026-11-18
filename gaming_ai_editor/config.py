@@ -175,6 +175,9 @@ DEFAULTS: dict[str, Any] = {
     # "fortnite": {"match": ["fortnite"], "regions": {"kill_feed": [0.0, 0.55, 0.35, 0.8]},
     #              "keywords": {"kill": ["eliminated"], "victoire": ["victory royale"]}}
     "games": {},
+    # Emballage YouTube (OUTPUT/reports/<vidéo>.metadata.json) : 3 titres, description,
+    # chapitres, hashtags, miniature PNG. game_name vide : déduit du profil de jeu / du fichier.
+    "youtube": {"enabled": True, "game_name": ""},
     "dashboard": {"host": "127.0.0.1", "port": 8765},
 }
 
