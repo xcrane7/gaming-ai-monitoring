@@ -1,7 +1,5 @@
 numpy>=1.24
 opencv-python-headless>=4.8
 Pillow>=10.0
-# Lecture du texte à l'écran (kill feed, bandeaux) - facultatif, Apache-2.0 / MIT.
-# Au premier usage, RapidOCR télécharge ses modèles (~15 Mo) une seule fois.
-rapidocr>=3.0
-onnxruntime>=1.17
+# Lecture du texte à l'écran (OCR) : facultative, dans requirements-ocr.txt
+# (installée à part par scripts\install.bat : son échec ne bloque pas le reste).

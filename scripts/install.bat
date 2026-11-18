@@ -14,9 +14,17 @@ echo Creation de l'environnement Python local (.venv)...
 if errorlevel 1 goto :fail
 
 :deps
-echo Installation des dependances (NumPy, OpenCV)...
+echo Installation des dependances (NumPy, OpenCV, Pillow)...
 ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt
 if errorlevel 1 goto :fail
+echo Installation de la lecture du texte a l'ecran (OCR, facultatif)...
+".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements-ocr.txt
+if errorlevel 1 (
+  echo.
+  echo [info] OCR non installe ^(souvent : pas encore disponible pour ta version de Python^).
+  echo        Le montage fonctionne quand meme, sans lecture du kill feed a l'ecran.
+  echo.
+)
 
 where ffmpeg >nul 2>nul
 if not errorlevel 1 goto :inspect

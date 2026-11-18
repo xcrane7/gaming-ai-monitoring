@@ -35,7 +35,7 @@ Lis d'abord `README.md` puis `docs/ENGINES.md` (architecture des dix moteurs).
    `gaming_ai_editor/synth.py` plutôt que sur des fichiers externes.
 6. Pas de nouvelle dépendance sans vérifier sa licence (MIT, BSD, Apache, LGPL, ISC,
    MPL : oui ; GPL, AGPL, licence inconnue ou commerciale : non) et sans l'ajouter à
-   `requirements.txt`.
+   `requirements.txt` (ou `requirements-ocr.txt` si elle est facultative).
 7. Code et messages en français, comme le reste du projet.
 8. Ne jamais écrire de clé API dans le code, les journaux ou git (`gemini_key.txt` est
    ignoré par git).

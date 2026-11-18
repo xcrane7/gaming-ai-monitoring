@@ -90,7 +90,7 @@ def inspect(cfg=None) -> dict:
         "render_encoder": "nvenc" if encoders.get("h264_nvenc") else
                           "cpu" if encoders.get("libx264") else None,
         "modules": {name: _module_version(name)
-                    for name in ("numpy", "cv2", "faster_whisper")},
+                    for name in ("numpy", "cv2", "PIL", "rapidocr", "faster_whisper")},
         "cli": {name: shutil.which(name) for name in ("gemini", "claude")},
         "gemini_api_key": bool(cfg and _gemini_key(cfg)),
         "disk_free_gb": round(shutil.disk_usage(root).free / 1024 ** 3, 1),
@@ -103,12 +103,17 @@ def inspect(cfg=None) -> dict:
                         "et vérifie qu'il est dans le PATH.")
     elif not encoders.get("libx264"):
         problems.append("Cette version de FFmpeg n'a pas libx264 (prendre un build « full »).")
-    if not report["modules"]["numpy"]:
-        problems.append("NumPy manquant : pip install -r requirements.txt")
+    for mod, label in (("numpy", "NumPy"), ("PIL", "Pillow")):
+        if not report["modules"][mod]:
+            problems.append(f"{label} manquant : relance scripts\\install.bat "
+                            "(ou pip install -r requirements.txt)")
     notes = []
     if ffmpeg_version and not encoders.get("h264_nvenc"):
         notes.append("NVENC inutilisable (pas de GPU NVIDIA détecté par FFmpeg, ou pilote trop "
                      "ancien) : rendu sur CPU.")
+    if not report["modules"]["rapidocr"]:
+        notes.append("RapidOCR absent : pas de lecture du texte à l'écran (kill feed, "
+                     "VICTORY). Facultatif : pip install -r requirements-ocr.txt")
     if not report["modules"]["cv2"]:
         notes.append("OpenCV absent : analyse visuelle en mode NumPy (fonctionnel, moins fin).")
     if not report["modules"]["faster_whisper"]:

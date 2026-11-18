@@ -1,0 +1,6 @@
+# Lecture du texte à l'écran (kill feed, bandeaux) - facultatif, Apache-2.0 / MIT.
+# Au premier usage, RapidOCR télécharge ses modèles (~15 Mo) une seule fois.
+# onnxruntime n'existe pas toujours pour la toute dernière version de Python :
+# sans lui, le montage marche, seule la lecture du texte à l'écran est désactivée.
+rapidocr>=3.0
+onnxruntime>=1.17
