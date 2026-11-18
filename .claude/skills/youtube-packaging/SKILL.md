@@ -15,7 +15,7 @@ sinon rien — jamais le nom de fichier dans un titre).
  "description_full": "accroche + chapitres + hashtags, prête à coller",
  "chapters": [{"t": "00:00", "title": "Intro"}, ...], "hashtags": ["#..."],
  "thumbnail": {"text": "2 à 4 mots", "idea": "...", "frame_time": 12.4, "source_time": 53.2,
-               "path": ".../<vidéo>_thumbnail.png"},
+               "path": "OUTPUT/youtube/<vidéo>_thumbnail.png (sans version longue : OUTPUT/reports)"},
  "short_hook": "3 à 7 mots", "game": "...", "source": "claude" | "local"}
 ```
 Visible dans le dashboard (onglet Montage, « Publication YouTube » : miniature, 3 titres,

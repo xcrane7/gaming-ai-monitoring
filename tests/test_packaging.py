@@ -111,6 +111,7 @@ def test_build_writes_metadata_and_thumbnail_without_ai(cfg, media):
     assert saved["thumbnail"]["source_time"] == best.peak, "image propre de la source"
     assert all(" " not in t[-1:] and not t.endswith("'") for t in saved["titles"])
     thumb = Path(saved["thumbnail"]["path"])
+    assert thumb.parent == Path(media["short"]).parent  # à côté de la vidéo longue
     assert thumb.suffix == ".png" and (probe(thumb).width, probe(thumb).height) == (1280, 720)
     assert packaging.best_moment_label([{"highlights": [{"label": "action"},
                                                          {"label": "fail"}]}]) == ""

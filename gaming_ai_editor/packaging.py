@@ -304,7 +304,10 @@ def build(cfg, guard, log, stem: str, outputs: list[dict], analyses: list[dict],
             # image propre de la source (le rendu porte déjà accroche et sous-titres)
             src = seg.source if Path(seg.source).is_file() else ref["path"]
             t = seg.peak if src == seg.source else at
-            path = Path(ref["path"]).with_name(Path(ref["path"]).stem + "_thumbnail.png")
+            # à côté de la vidéo YouTube ; sans version longue, dans reports (pas dans shorts)
+            folder = Path(long_out["path"]).parent if long_out else reports_dir
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{stem}_thumbnail.png"
             make_thumbnail(src, t, pkg["thumbnail"]["text"], plan.style or {}, path)
             pkg["thumbnail"]["path"] = str(path)
         except Exception as exc:
