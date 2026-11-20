@@ -47,4 +47,13 @@ et activés automatiquement.
 **À décider :** quelles technologies brancher en priorité, une fois les points 1 à 4 fixés.
 
 ## Décisions prises
-(à remplir au fil de la discussion)
+**Point 1 (en cours)**
+- Jeux : FPS et GTA 6. Deux définitions du « bon moment » : FPS = éliminations,
+  multi-kills, clutch, kill feed ; GTA 6 = poursuites, crashs, cascades, explosions,
+  moments drôles (pas de kill feed : l'OCR des FPS ne sert presque pas).
+- IA sur le PC : Claude Code (déjà branché : mode auto, il regarde les images des moments
+  dès que la commande `claude` existe), OpenCode, abonnement Gemini. L'abonnement Gemini
+  grand public ne donne pas d'accès programmable (le CLI refuse les comptes personnels) :
+  une clé gratuite AI Studio reste possible en secours. OpenCode : pas nécessaire.
+- Prochaine étape : un vrai gameplay FPS et un vrai gameplay GTA 6 de l'utilisateur pour
+  régler la détection sur ses jeux.
