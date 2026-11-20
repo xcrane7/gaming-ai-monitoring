@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gaming AI Editor</title>
+<style>
+:root{
+  --bg:#0c0e13;--panel:#141821;--panel2:#1a1f2b;--line:#262d3b;--text:#e8ecf3;--muted:#8b95a8;
+  --accent:#b6f24a;--accent-ink:#11160a;--cyan:#5ad1ff;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;
+  --radius:12px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:rgba(12,14,19,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.bar{max-width:1180px;margin:0 auto;padding:14px 16px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.brand{font-weight:800;letter-spacing:.04em;font-size:17px}
+.brand b{color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;font-size:12.5px;color:var(--muted);background:var(--panel)}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.chip.on i{background:var(--ok)} .chip.busy i{background:var(--warn);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.3}}
+nav{max-width:1180px;margin:0 auto;padding:0 16px;display:flex;gap:4px;overflow-x:auto}
+nav button{background:none;border:0;color:var(--muted);padding:10px 14px;font:inherit;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+nav button[aria-selected=true]{color:var(--text);border-color:var(--accent)}
+main{max-width:1180px;margin:0 auto;padding:20px 16px 60px}
+section{display:none} section.active{display:block}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:26px 0 10px;font-weight:700}
+h2:first-child{margin-top:0}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+.tile .n{font-size:28px;font-weight:800;line-height:1.1}
+.tile .l{color:var(--muted);font-size:12.5px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:10px}
+.row{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.grow{flex:1;min-width:180px}
+.name{font-weight:650;overflow-wrap:anywhere}
+.sub{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.03em;border:1px solid var(--line);color:var(--muted)}
+.badge.pass,.badge.done,.badge.active{color:var(--ok);border-color:rgba(74,222,128,.4)}
+.badge.warn,.badge.queued,.badge.validated{color:var(--warn);border-color:rgba(251,191,36,.4)}
+.badge.fail,.badge.failed,.badge.rejected,.badge.rolled_back,.badge.quarantine{color:var(--bad);border-color:rgba(248,113,113,.4)}
+.badge.running,.badge.testing{color:var(--cyan);border-color:rgba(90,209,255,.4)}
+.badge.fmt{color:var(--accent);border-color:rgba(182,242,74,.4)}
+.progress{height:6px;background:var(--panel2);border-radius:999px;overflow:hidden;margin-top:10px}
+.progress>div{height:100%;background:linear-gradient(90deg,var(--cyan),var(--accent));transition:width .6s}
+button.act{background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:700;cursor:pointer}
+button.ghost{background:none;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,nav button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:12px;align-items:start}
+.grid .card{margin:0}
+details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:10px}
+video{width:100%;max-height:420px;background:#000;border-radius:8px;margin-top:10px}
+ul.checks{list-style:none;margin:10px 0 0;padding:0;font-size:13px}
+ul.checks li{display:flex;gap:8px;padding:3px 0;border-top:1px solid var(--line)}
+ul.checks .s{width:16px;font-weight:800}
+.s.pass{color:var(--ok)}.s.warn{color:var(--warn)}.s.fail{color:var(--bad)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;background:var(--panel)}
+tr:last-child td{border-bottom:0}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+a{color:var(--cyan)}
+.log{font-family:var(--mono);font-size:12.5px;max-height:420px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px}
+.log div{padding:2px 0;overflow-wrap:anywhere}.log .error{color:var(--bad)}.log .warn{color:var(--warn)}.log time{color:var(--muted)}
+.empty{color:var(--muted);padding:18px;text-align:center;border:1px dashed var(--line);border-radius:var(--radius)}
+svg.timeline{width:100%;height:90px;display:block;margin-top:10px;background:var(--panel2);border-radius:8px}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:10px 16px;border-radius:10px;display:none;z-index:9}
+code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);padding:1px 6px;border-radius:5px;overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand">GAMING<b>_AI_</b>EDITOR</div>
+    <div class="chips" id="chips"></div>
+  </div>
+  <nav role="tablist">
+    <button role="tab" data-tab="montage" aria-selected="true">Montage</button>
+    <button role="tab" data-tab="videos" aria-selected="false">Vidéos sources</button>
+    <button role="tab" data-tab="research" aria-selected="false">Skills Researcher</button>
+    <button role="tab" data-tab="system" aria-selected="false">Système</button>
+  </nav>
+</header>
+<main>
+  <section id="montage" class="active">
+    <div class="tiles" id="tiles"></div>
+    <h2>File de traitement</h2><div id="jobs"></div>
+    <h2>Rendus</h2><div class="grid" id="renders"></div>
+    <h2>Publication YouTube</h2><div class="grid" id="packages"></div>
+  </section>
+  <section id="videos"><h2>Vidéos détectées dans INPUT</h2><div id="videolist"></div></section>
+  <section id="research">
+    <div class="card row">
+      <div class="grow"><div class="name" id="rstate"></div><div class="sub" id="rnext"></div></div>
+      <button class="act" id="runresearch">Lancer un cycle maintenant</button>
+    </div>
+    <h2>Skills actifs</h2><div class="grid" id="activeskills"></div>
+    <h2>Expériences</h2><div id="experiments"></div>
+    <h2>Historique des activations</h2><div id="history"></div>
+    <h2>Outils découverts</h2><div id="discoveries"></div>
+  </section>
+  <section id="system">
+    <h2>Machine</h2><div id="env"></div>
+    <h2>IA et coûts</h2><div id="ai"></div>
+    <h2>Journal</h2><div class="log" id="log"></div>
+  </section>
+</main>
+<div class="toast" id="toast" role="status"></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const dur = s => { s = Math.round(s || 0); const m = Math.floor(s / 60); return m ? `${m} min ${String(s % 60).padStart(2, "0")} s` : `${s} s`; };
+const when = t => t ? new Date(t * 1000).toLocaleString("fr-FR", {day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"}) : "—";
+const base = p => String(p || "").split(/[\\/]/).pop();
+const STATUS = {queued:"en file", running:"en cours", done:"terminé", failed:"échec", pass:"QA validée", warn:"QA avec réserve", fail:"QA refusée",
+  active:"actif", rejected:"rejeté", validated:"validé", retired:"remplacé", rolled_back:"annulé", candidate:"à tester",
+  new:"nouveau", analyzing:"analyse", analyzed:"analysé", testing:"en test", quarantine:"quarantaine"};
+const badge = s => `<span class="badge ${esc(String(s).toLowerCase())}">${esc(STATUS[s] || STATUS[String(s).toLowerCase()] || s)}</span>`;
+let state = null, openRender = new Set(), openVideo = null, timelines = {};
+
+function toast(msg){ const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 3500); }
+async function post(url, body){ const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body || {})}); const d = await r.json(); toast(d.message || d.error || "OK"); refresh(); }
+
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll("section").forEach(s => s.classList.toggle("active", s.id === b.dataset.tab));
+});
+$("runresearch").onclick = () => post("/api/research/run");
+
+function renderChips(s){
+  const aiOn = [s.ai.gemini.state, s.ai.claude.state].some(x => /^(CLI|API)/.test(x));
+  const ai = aiOn ? "IA : abonnements" : "IA : mode local";
+  const next = s.research.next_run_at ? Math.max(0, (s.research.next_run_at - s.now) / 3600) : null;
+  const research = s.research.running ? "Recherche en cours" : !s.research.enabled ? "Chercheur désactivé" : !s.research.scheduler ? "Chercheur à l'arrêt" : next === null ? "Chercheur : en attente" : `Recherche dans ${next < 1 ? Math.round(next * 60) + " min" : next.toFixed(1) + " h"}`;
+  $("chips").innerHTML =
+    `<span class="chip on"><i></i>${s.encoder === "nvenc" ? "GPU NVENC" : "Encodage CPU"}</span>` +
+    `<span class="chip ${s.rendering ? "busy" : ""}"><i></i>${s.rendering ? "Rendu en cours" : "Au repos"}</span>` +
+    `<span class="chip ${aiOn ? "on" : ""}"><i></i>${esc(ai)}</span>` +
+    `<span class="chip ${s.research.running ? "busy" : ""}"><i></i>${esc(research)}</span>`;
+}
+function renderMontage(s){
+  const ok = s.renders.filter(r => r.qa_status !== "fail").length;
+  const queue = s.jobs.filter(j => j.status === "queued" || j.status === "running").length;
+  $("tiles").innerHTML = [[s.videos.length, "vidéos sources"], [ok, "rendus validés"], [queue, "en traitement"], [s.research.skills.filter(k => String(k.status).toUpperCase() === "ACTIVE").length, "skills actifs"]]
+    .map(([n, l]) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+  $("jobs").innerHTML = s.jobs.length ? s.jobs.slice(0, 8).map(j => `
+    <div class="card"><div class="row"><div class="grow"><div class="name">${esc(base(j.source) || "Compilation")}</div>
+      <div class="sub">Tâche ${j.id} · ${esc(j.stage || "")}${j.error ? " · " + esc(j.error) : ""}</div></div>
+      ${badge(j.status)}${j.status === "failed" ? `<button class="ghost" onclick="post('/api/jobs/${j.id}/retry')">Relancer</button>` : ""}</div>
+      ${j.status === "running" ? `<div class="progress"><div style="width:${Math.round((j.progress || 0) * 100)}%"></div></div>` : ""}</div>`).join("")
+    : `<div class="empty">Dépose une vidéo dans <code>${esc(s.paths.input)}</code> : elle sera montée automatiquement.</div>`;
+  $("renders").innerHTML = s.renders.length ? s.renders.map(r => `
+    <div class="card"><div class="name">${esc(r.name)}</div>
+      <div class="row" style="margin:6px 0"><span class="badge fmt">${r.format === "short" ? "Short 9:16" : "YouTube 16:9"}</span>${badge(r.qa_status)}</div>
+      <div class="sub">${esc(r.source)} · ${r.width}×${r.height} · ${dur(r.duration)} · ${r.clips} clip${r.clips > 1 ? "s" : ""} · ${esc(r.encoder || "")} en ${dur(r.render_seconds)}</div>
+      ${r.style ? `<div class="sub">Style ${esc(r.style)} · ${r.effects} effets · ${r.graphics} éléments animés${r.motion_score != null ? " · score QA montage " + r.motion_score + "/100" : ""}</div>` : ""}
+      <details data-render="${r.id}" ${openRender.has(r.id) ? "open" : ""}><summary>Aperçu et contrôle qualité</summary>
+      ${openRender.has(r.id) && r.exists ? `<video controls preload="metadata" src="/media/${r.id}"></video>` : ""}
+      <ul class="checks">${(r.qa_report.checks || []).map(c => `<li><span class="s ${esc(c.status)}">${c.status === "pass" ? "✓" : c.status === "warn" ? "!" : "✕"}</span><span><b>${esc(c.name)}</b> — ${esc(c.detail)}</span></li>`).join("")}</ul>
+      ${r.notes.map(n => `<div class="sub">${esc(n)}</div>`).join("")}<div class="sub"><code>${esc(r.path)}</code></div></details></div>`).join("")
+    : `<div class="empty">Aucun rendu pour l'instant.</div>`;
+  $("packages").innerHTML = (s.packages || []).length ? s.packages.map(p => `
+    <div class="card">${p.has_thumbnail ? `<img src="/thumbnail/${encodeURIComponent(p.id)}" alt="Miniature ${esc(p.id)}" style="width:100%;border-radius:8px;aspect-ratio:16/9;object-fit:cover">` : ""}
+      <div class="name" style="margin-top:6px">${esc(p.id)}${p.game ? " · " + esc(p.game) : ""}</div>
+      <div class="row" style="margin:6px 0"><span class="badge fmt">${p.source === "claude" ? "Écrit par Claude" : "Modèles locaux"}</span></div>
+      <ol class="sub" style="padding-left:18px;margin:4px 0">${(p.titles || []).map(t => `<li>${esc(t)}</li>`).join("")}</ol>
+      <details><summary>Description, chapitres, hashtags</summary>
+      <pre class="sub" style="white-space:pre-wrap;user-select:all">${esc(p.description_full || p.description)}</pre>
+      <div class="sub">Miniature : « ${esc((p.thumbnail || {}).text)} »${(p.thumbnail || {}).frame_time != null ? " à " + p.thumbnail.frame_time + " s" : ""} · accroche Short : « ${esc(p.short_hook)} »</div></details></div>`).join("")
+    : `<div class="empty">Les titres, chapitres et miniatures apparaîtront ici après le premier montage.</div>`;
+  document.querySelectorAll("details[data-render]").forEach(d => d.ontoggle = () => { const id = +d.dataset.render; const had = openRender.has(id); d.open ? openRender.add(id) : openRender.delete(id); if (d.open !== had) renderMontage(state); });
+}
+function timelineSvg(t){
+  const W = 1000, H = 90, max = Math.max(...t.score, 0.001), n = t.score.length;
+  const pts = t.score.map((v, i) => `${(i / (n - 1 || 1) * W).toFixed(1)},${(H - 6 - v / max * (H - 14)).toFixed(1)}`).join(" ");
+  const marks = t.highlights.map(h => `<rect x="${(h.start / t.duration * W).toFixed(1)}" y="0" width="${Math.max(2, (h.end - h.start) / t.duration * W).toFixed(1)}" height="${H}" fill="rgba(182,242,74,.16)"><title>${esc(h.label)} — ${h.peak.toFixed(0)} s (score ${h.score})</title></rect>`).join("");
+  return `<svg class="timeline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Intensité du gameplay et moments forts">${marks}<polyline points="${pts}" fill="none" stroke="#5ad1ff" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>
+    <div class="sub">${t.highlights.length} moments forts (zones vertes) · ${t.scene_cuts.length} changements de plan · analyse ${esc(t.backend || "")}${t.ai ? " + Gemini" : ""}</div>`;
+}
+function renderVideos(s){
+  $("videolist").innerHTML = s.videos.length ? s.videos.map(v => `
+    <div class="card"><div class="row"><div class="grow"><div class="name">${esc(v.name)}</div>
+      <div class="sub">${v.width || "?"}×${v.height || "?"} · ${dur(v.duration)} · ${v.highlights} moments forts · ajouté le ${when(v.added_at)}</div></div>
+      ${badge(v.status)}<button class="ghost" onclick="toggleVideo(${v.id})">${openVideo === v.id ? "Masquer" : "Voir l'analyse"}</button></div>
+      ${openVideo === v.id ? (timelines[v.id] ? timelineSvg(timelines[v.id]) : `<div class="sub">Analyse indisponible pour l'instant.</div>`) : ""}</div>`).join("")
+    : `<div class="empty">Aucune vidéo détectée.</div>`;
+}
+async function toggleVideo(id){
+  openVideo = openVideo === id ? null : id;
+  if (openVideo && !timelines[id]) { const r = await fetch(`/api/video/${id}/timeline`); if (r.ok) timelines[id] = await r.json(); }
+  renderVideos(state);
+}
+const KIND = {encode_profile:"Réglages d'encodage", scene_detector:"Détecteur de changements de plan", motion_preset:"Réglages du motion design", decode_accel:"Décodage matériel (GPU)"};
+function table(head, rows){ return rows.length ? `<div class="tablewrap"><table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` : `<div class="empty">Rien pour l'instant.</div>`; }
+function renderResearch(s){
+  const r = s.research;
+  $("rstate").textContent = r.running ? "Cycle de recherche en cours…" : r.enabled ? `Un cycle toutes les ${r.interval_hours} h, en priorité basse, en pause pendant les rendus` : "Chercheur désactivé dans la configuration";
+  $("rnext").textContent = r.scheduler ? `Prochain cycle : ${when(r.next_run_at)} · Dernier : ${r.runs[0] ? when(r.runs[0].started_at) + " (" + r.runs[0].status + ")" : "aucun"}` : "Planification active uniquement avec « run » (ici : dashboard seul). Dernier cycle : " + (r.runs[0] ? when(r.runs[0].started_at) : "aucun");
+  $("runresearch").disabled = r.running;
+  const active = r.skills.filter(k => String(k.status).toUpperCase() === "ACTIVE");
+  $("activeskills").innerHTML = active.map(k => `<div class="card"><div class="sub">${esc(KIND[k.kind] || k.kind)}</div><div class="name">${esc(k.name)} <span class="sub">v${esc(k.version)}</span></div>
+    <div class="sub">Licence : ${esc(k.license || "—")} · actif depuis le ${when(k.activated_at)}</div>
+    ${r.history.some(h => h.kind === k.kind && h.action === "promote" && h.skill_id === k.id && h.prev_skill_id) ? `<p><button class="ghost" onclick="post('/api/skills/rollback',{kind:'${esc(k.kind)}'})">Revenir à la version précédente</button></p>` : ""}</div>`).join("");
+  $("experiments").innerHTML = table(["Skill", "Type", "État", "Mesure"], r.skills.filter(k => k.origin !== "builtin").map(k => `<tr><td>${esc(k.name)} <span class="sub">v${esc(k.version)}</span></td><td>${esc(KIND[k.kind] || k.kind)}</td><td>${badge(k.status)}</td><td>${esc(k.verdict)}</td></tr>`));
+  $("history").innerHTML = table(["Date", "Action", "Skill", "Raison"], r.history.map(h => `<tr><td class="num">${when(h.at)}</td><td>${h.action === "promote" ? "Activation" : h.action === "quarantine" ? "Quarantaine" : "Rollback"}</td><td>${esc(h.name)} <span class="sub">v${esc(h.version)}</span></td><td>${esc(h.reason)}</td></tr>`));
+  $("discoveries").innerHTML = table(["Outil", "Source", "Licence", "Statut", "Résumé"], r.discoveries.map(d => `<tr><td>${/^https:\/\//.test(d.url || "") ? `<a href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">${esc(d.name)}</a>` : esc(d.name)} <span class="sub">${esc(d.version)}</span></td><td>${esc(d.source)}</td><td>${esc(d.license)}</td><td>${esc(d.status)}</td><td>${esc(d.summary)}</td></tr>`));
+}
+function renderSystem(s){
+  const e = s.environment || {};
+  $("env").innerHTML = e.os ? `<div class="card"><div class="sub">
+    <b>Système</b> ${esc(e.os)}<br><b>Processeur</b> ${esc(e.cpu)} (${e.cpu_threads} threads) · <b>Mémoire</b> ${e.ram_gb} Go<br>
+    <b>GPU</b> ${esc((e.gpu || []).join(", ") || "aucun GPU NVIDIA détecté")}<br><b>FFmpeg</b> ${esc(e.ffmpeg || "introuvable")}<br>
+    <b>Encodeurs</b> ${Object.entries(e.encoders || {}).map(([k, v]) => `${esc(k)} ${v ? "✓" : "✕"}`).join(" · ")}<br>
+    <b>Modules</b> ${Object.entries(e.modules || {}).map(([k, v]) => `${esc(k)} ${esc(v || "absent")}`).join(" · ")}<br>
+    <b>Musiques</b> ${s.assets.music.length} · <b>Effets sonores</b> ${s.assets.sfx.length}
+    ${(e.problems || []).map(p => `<br><span class="s fail">✕</span> ${esc(p)}`).join("")}${(e.notes || []).map(p => `<br>· ${esc(p)}`).join("")}</div></div>`
+    : `<div class="empty">Lance <code>python -m gaming_ai_editor inspect</code> pour remplir cette section.</div>`;
+  $("ai").innerHTML = `<div class="card"><div class="sub">
+    <b>API payantes</b> : ${s.ai.allow_paid_api ? "autorisées par toi dans config.json" : "bloquées (aucun achat sans ton autorisation)"}<br>
+    <b>Gemini</b> : ${esc(s.ai.gemini.state)} · <b>Claude</b> : ${esc(s.ai.claude.state)}</div></div>` +
+    table(["Date", "Service", "Usage", "Décision"], s.ai_calls.map(c => `<tr><td class="num">${when(c.at)}</td><td>${esc(c.provider)}</td><td>${esc(c.purpose)}</td><td>${c.allowed ? "autorisé" : "refusé"} — ${esc(c.detail)}</td></tr>`));
+  $("log").innerHTML = s.events.map(ev => `<div class="${esc(ev.level)}"><time>${when(ev.at)}</time> [${esc(ev.source)}] ${esc(ev.message)}</div>`).join("") || "Journal vide.";
+}
+const memo = {};
+function once(name, key, fn){ if (memo[name] !== key) { memo[name] = key; fn(); } }
+async function refresh(){
+  try {
+    const r = await fetch("/api/state"); const s = state = await r.json();
+    renderChips(s);
+    once("montage", JSON.stringify([s.jobs, s.renders, s.packages, s.videos.length, s.research.skills.length]), () => renderMontage(s));
+    once("videos", JSON.stringify(s.videos), () => renderVideos(s));
+    once("research", JSON.stringify([s.research, Math.round(s.now / 60)]), () => renderResearch(s));
+    once("system", JSON.stringify([s.environment, s.ai, s.ai_calls, s.events, s.assets]), () => renderSystem(s));
+  } catch (e) { $("chips").innerHTML = `<span class="chip"><i></i>Connexion perdue</span>`; }
+}
+refresh(); setInterval(refresh, 2500);
+</script>
+</body>
+</html>

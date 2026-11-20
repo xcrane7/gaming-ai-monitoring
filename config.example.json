@@ -1,0 +1,118 @@
+{
+  "_aide": "Copie ce fichier en config.json et ne garde que ce que tu veux changer. Tout le reste prend la valeur par defaut (voir gaming_ai_editor/config.py).",
+  "style": {
+    "enabled": true,
+    "channel_name": "",
+    "accent_color": "",
+    "hud": true,
+    "slowmo_audio": "keep_pitch",
+    "speed_up_dead_time": true,
+    "dead_time_speed": 1.7
+  },
+  "short": {
+    "target_seconds": 45,
+    "layout": "auto",
+    "structure": "story",
+    "bounds": "adaptive",
+    "loop_ending": true,
+    "hook_text": "auto"
+  },
+  "long": {
+    "target_seconds": 480,
+    "width": 1920,
+    "height": 1080,
+    "bounds": "adaptive",
+    "jl_cuts": 0.2
+  },
+  "render": {
+    "encoder": "auto",
+    "max_fps": 60,
+    "supersample": 1.15
+  },
+  "music": {
+    "enabled": true,
+    "volume_db": -20
+  },
+  "subtitles": {
+    "mode": "auto",
+    "whisper_model": "small",
+    "language": "fr",
+    "style": "words"
+  },
+  "ai": {
+    "allow_paid_api": false,
+    "gemini": {
+      "mode": "auto",
+      "free_tier_only": true,
+      "max_requests_per_day": 20
+    },
+    "claude": {
+      "mode": "auto"
+    },
+    "vision_order": [
+      "gemini",
+      "claude"
+    ],
+    "vision_top": 12,
+    "frames_per_moment": 3
+  },
+  "research": {
+    "enabled": true,
+    "interval_hours": 6,
+    "auto_integrate": true
+  },
+  "_options": {
+    "short.structure": "story (cold open + montée + climax à la fin) | best_first | chrono",
+    "short.bounds / long.bounds": "adaptive (suit l'action) | fixed (pre_roll / post_roll)",
+    "short.loop_ending": "true : fin coupée net pour la relecture TikTok (pas de bouton d'abonnement)",
+    "subtitles.style": "words ou tiktok (mot à mot animé) | classic (sous-titres ASS)",
+    "ai.vision_order": "qui étiquette les moments forts : gemini (clé gratuite) puis claude (abonnement)",
+    "games": "zones (fractions de l'image) et mots-clés du texte à lire à l'écran, par jeu ; « match » = morceau du nom de fichier",
+    "short.hook_text": "auto (Claude ou modèle selon le meilleur moment) | off | un texte fixe",
+    "style.slowmo_audio": "keep_pitch (hauteur conservée) | deep (son grave façon bullet time)",
+    "style.speed_up_dead_time": "accélère (×dead_time_speed) le plus long temps mort des clips de montée",
+    "render.supersample": "1.15 : punch-in net (zoom dans une image plus grande) ; 1.0 = désactivé, plus rapide",
+    "long.jl_cuts": "secondes d avance du son à chaque coupe du format long (0 = désactivé)",
+    "youtube.game_name": "nom du jeu pour les titres et hashtags (sinon déduit du profil de jeu `games` ; jamais le nom de fichier)",
+    "youtube.enabled": "emballage YouTube : 3 titres, description, chapitres, hashtags, miniature PNG 1280x720 dans OUTPUT/reports/<vidéo>.metadata.json"
+  },
+  "analysis": {
+    "rerank": true,
+    "ocr": "auto",
+    "rerank_top": 20,
+    "ocr_top": 10
+  },
+  "games": {
+    "exemple_fortnite": {
+      "match": [
+        "fortnite"
+      ],
+      "regions": {
+        "kill_feed": [
+          0.0,
+          0.55,
+          0.35,
+          0.8
+        ],
+        "centre": [
+          0.1,
+          0.25,
+          0.9,
+          0.75
+        ]
+      },
+      "keywords": {
+        "kill": [
+          "eliminated"
+        ],
+        "victoire": [
+          "victory royale"
+        ]
+      }
+    }
+  },
+  "youtube": {
+    "enabled": true,
+    "game_name": ""
+  }
+}

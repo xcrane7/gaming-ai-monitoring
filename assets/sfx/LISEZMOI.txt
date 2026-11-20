@@ -1,0 +1,5 @@
+Effets sonores utilisés par le monteur :
+  whoosh.wav  -> joué sur chaque transition des Shorts
+Pour générer des effets libres de droits (synthétisés par FFmpeg) :
+  python -m gaming_ai_editor sfx
+Tu peux les remplacer par les tiens en gardant le même nom de fichier.

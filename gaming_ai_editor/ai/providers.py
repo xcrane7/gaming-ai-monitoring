@@ -1,0 +1,442 @@
+"""Intégration IA optionnelle (Gemini analyste, Claude directeur) sous garde-fou de coûts.
+
+Principes :
+- Le système fonctionne entièrement sans IA (heuristiques locales).
+- Par défaut seuls les CLI de tes abonnements (`gemini`, `claude`) sont utilisés,
+  s'ils sont installés et connectés : aucun achat d'API ni de crédits.
+- Tout appel à une API payante exige `ai.allow_paid_api: true` dans config.json
+  ET une clé fournie par toi. Sinon l'appel est refusé et journalisé.
+- Toute réponse d'IA est validée ; en cas d'erreur on garde le résultat local.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import shutil
+import subprocess
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from ..db import Database
+from ..ffutil import _popen_kwargs, run_ffmpeg
+
+LABELS = ["kill", "headshot", "clutch", "victoire", "fail", "drôle", "cinematic", "action",
+          "rien"]
+SYNONYMS = {"funny": "drôle", "drole": "drôle", "win": "victoire", "victory": "victoire",
+            "boring": "rien", "cinématique": "cinematic", "cinematique": "cinematic",
+            "elimination": "kill", "élimination": "kill"}
+
+
+class CostGuard:
+    """Point de passage unique de toute dépense potentielle."""
+
+    def __init__(self, cfg, db: Database | None = None):
+        self.cfg = cfg
+        self.db = db
+
+    def authorize(self, provider: str, purpose: str, cost_class: str) -> bool:
+        if cost_class == "paid_api":
+            allowed = bool(self.cfg["ai"]["allow_paid_api"])
+            detail = ("autorisé par ai.allow_paid_api" if allowed
+                      else "REFUSÉ : API payante sans autorisation explicite")
+        elif cost_class == "free_tier_api":
+            # clé gratuite d'un projet sans facturation : Google refuse (erreur 429) au-delà
+            # du quota gratuit au lieu de facturer. Plafond quotidien en plus, par prudence.
+            limit = int(self.cfg["ai"]["gemini"].get("max_requests_per_day", 20))
+            used = self._count_today(provider, cost_class)
+            allowed = used < limit
+            detail = (f"clé gratuite, {used + 1}/{limit} aujourd'hui" if allowed
+                      else f"REFUSÉ : plafond quotidien atteint ({limit} requêtes)")
+        else:  # local | subscription_cli
+            allowed, detail = True, "aucun coût supplémentaire"
+        if self.db:
+            self.db.insert("ai_calls", at=time.time(), provider=provider, purpose=purpose,
+                           allowed=int(allowed), cost_class=cost_class, detail=detail)
+        return allowed
+
+
+    def _count_today(self, provider: str, cost_class: str) -> int:
+        if not self.db:
+            return 0
+        start = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+        row = self.db.one("SELECT COUNT(*) AS n FROM ai_calls WHERE provider=? AND cost_class=? "
+                          "AND allowed=1 AND at>=?", (provider, cost_class, start))
+        return int(row["n"]) if row else 0
+
+
+def gemini_api_key(cfg) -> str | None:
+    """Clé Gemini : variable d'environnement GEMINI_API_KEY ou fichier gemini_key.txt du projet."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if key:
+        return key
+    path = Path(cfg.root) / "gemini_key.txt"
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return key or None
+
+
+GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+
+
+class QuotaExhausted(RuntimeError):
+    pass
+
+
+def extract_json(text: str):
+    """Extrait le premier objet/tableau JSON valide d'une réponse de modèle."""
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch in "[{":
+            try:
+                value, _ = decoder.raw_decode(text[i:])
+                return value
+            except json.JSONDecodeError:
+                continue
+    raise ValueError("Aucun JSON dans la réponse")
+
+
+SHORT_INSTRUCTION = "Reponds a la demande ci-dessus, uniquement en JSON."
+
+
+def run_cli(command: str, prompt: str, timeout: int, extra_args: list[str] | None = None,
+            cwd: Path | None = None, arg_prompt: str = SHORT_INSTRUCTION) -> str:
+    """Appelle le CLI d'un abonnement (gemini, claude) en mode non interactif.
+
+    Le texte long passe par l'entrée standard ; seule une courte ligne sans caractère
+    spécial passe en argument `-p`. Sous Windows, `gemini` et `claude` sont des
+    fichiers .cmd : un argument multi-ligne y serait tronqué et les caractères
+    & | % ^ < > interprétés par l'invite de commandes.
+    """
+    exe = shutil.which(command)
+    if not exe:
+        raise FileNotFoundError(command)
+    proc = subprocess.run([exe, *(extra_args or []), "-p", arg_prompt], input=prompt,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, cwd=cwd, **_popen_kwargs())
+    if proc.returncode != 0:
+        raise RuntimeError(f"{command} code {proc.returncode}: {proc.stderr.strip()[-300:]}")
+    return proc.stdout
+
+
+def provider_status(cfg) -> dict:
+    """État des accès IA, affiché dans le dashboard."""
+    out = {"allow_paid_api": bool(cfg["ai"]["allow_paid_api"])}
+    for name in ("gemini", "claude"):
+        conf = cfg["ai"][name]
+        cli = shutil.which(conf["command"])
+        mode = conf["mode"]
+        key = gemini_api_key(cfg) if name == "gemini" else None
+        if mode == "off":
+            state = "désactivé"
+        elif key and mode in ("auto", "api"):
+            free = conf.get("free_tier_only", True)
+            state = ("API gratuite (clé détectée)" if free else
+                     "API payante autorisée" if cfg["ai"]["allow_paid_api"] else
+                     "API payante bloquée (allow_paid_api = false)")
+        elif cli and mode in ("auto", "cli"):
+            state = ("CLI d'abonnement détecté" + (" (analyse des images + textes)"
+                                                    if name == "claude" and conf.get("vision", True)
+                                                    else ""))
+        else:
+            state = "indisponible — mode local"
+        out[name] = {"mode": mode, "cli": cli, "state": state}
+    return out
+
+
+class GeminiAnalyst:
+    """Qualifie les moments forts (kill, victoire, fail, drôle...) à partir d'images clés."""
+
+    MAX_MOMENTS = 10
+
+    def __init__(self, cfg, guard: CostGuard, log=print):
+        self.cfg, self.guard, self.log = cfg, guard, log
+        self.conf = cfg["ai"]["gemini"]
+
+    def _route(self) -> str | None:
+        """API (clé) d'abord : depuis juin 2026, Gemini CLI refuse les comptes Google
+        personnels ; un CLI installé mais non connecté ne doit pas masquer la clé."""
+        mode = self.conf["mode"]
+        if mode == "off":
+            return None
+        if mode in ("auto", "api") and gemini_api_key(self.cfg):
+            return "api"
+        if mode in ("auto", "cli") and shutil.which(self.conf["command"]):
+            return "cli"
+        return None
+
+    def available(self) -> bool:
+        return self._route() is not None
+
+    def _frames(self, analysis: dict, work: Path) -> list[tuple[int, Path]]:
+        """Images de chaque moment candidat : début, pic et fin (l'action, pas une image figée).
+
+        Retourne [(index du moment, image)], plusieurs images par moment.
+        """
+        from ..analysis.rerank import moment_times
+
+        work.mkdir(parents=True, exist_ok=True)
+        ai = self.cfg["ai"]
+        top = int(ai.get("vision_top", self.MAX_MOMENTS))
+        per = max(1, int(ai.get("frames_per_moment", 3)))
+        frames = []
+        chosen = [i for i, h in enumerate(analysis["highlights"]) if h.get("label") != "menu"]
+        for i in chosen[:top]:
+            h = analysis["highlights"][i]
+            times = moment_times(h, float(analysis.get("duration", h["end"] + 1)))
+            if per == 1 or len(times) == 1:
+                times = [h["peak"]]
+            for k, t in enumerate(times[:per]):
+                out = work / f"moment_{i:02d}_{k + 1}.jpg"
+                try:
+                    run_ffmpeg(["-ss", f"{t:.2f}", "-i", analysis["path"], "-frames:v", "1",
+                                "-vf", "scale=640:-2", "-q:v", "5", str(out)])
+                    frames.append((i, out))
+                except Exception:
+                    continue
+        return frames
+
+    def _prompt(self, analysis: dict, frames: list[tuple[int, Path]], with_refs: bool) -> str:
+        lines = [
+            "Tu es l'analyste d'un monteur vidéo gaming. Pour chaque moment fort candidat, tu "
+            "as plusieurs images dans l'ordre (début, pic, fin). Juge l'ACTION qui se déroule, "
+            f"donne une étiquette parmi {LABELS} et un intérêt de 0 à 10 pour un Short.",
+            "kill = élimination visible ; clutch = retournement / situation sauvée de justesse ; "
+            "cinematic = cinématique non jouée ; rien = sans intérêt. N'invente rien que les "
+            "images ne montrent pas.",
+            "Réponds UNIQUEMENT avec un tableau JSON : "
+            '[{"index": 0, "label": "kill", "interest": 8, "why": "raison courte"}].',
+            "Moments :",
+        ]
+        by_moment: dict[int, list[Path]] = {}
+        for i, path in frames:
+            by_moment.setdefault(i, []).append(path)
+        for i, paths in by_moment.items():
+            h = analysis["highlights"][i]
+            refs = " ".join((f"@{p.name}" if with_refs else p.name) for p in paths)
+            hint = h.get("meta", {}).get("why")
+            lines.append(f"- index {i} : t={h['peak']:.1f}s, images {refs}"
+                         + (f" (indices locaux : {hint})" if hint else ""))
+        return "\n".join(lines)
+
+    def _call_api(self, prompt: str, frames: list[tuple[int, Path]]) -> str:
+        """Une seule requête par vidéo : texte + toutes les images clés."""
+        key = gemini_api_key(self.cfg)
+        parts: list[dict] = [{"text": prompt}]
+        for _, path in frames:
+            parts.append({"inline_data": {"mime_type": "image/jpeg",
+                                          "data": base64.b64encode(path.read_bytes()).decode()}})
+        body = json.dumps({"contents": [{"parts": parts}],
+                           "generationConfig": {"responseMimeType": "application/json",
+                                                "temperature": 0.2}}).encode()
+        models = ([self.conf["model"]] if self.conf.get("model") else []) + GEMINI_MODELS
+        last_error = None
+        for model in dict.fromkeys(models):
+            req = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                data=body, headers={"Content-Type": "application/json", "x-goog-api-key": key})
+            try:
+                with urllib.request.urlopen(req, timeout=int(self.conf["timeout"])) as resp:
+                    data = json.loads(resp.read())
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429:
+                    raise QuotaExhausted("quota gratuit épuisé pour aujourd'hui")
+                if exc.code in (400, 401, 403):
+                    raise RuntimeError(f"clé refusée par Google (HTTP {exc.code})")
+                last_error = f"{model}: HTTP {exc.code}"  # 404 : modèle retiré, on essaie le suivant
+        raise RuntimeError(f"aucun modèle Gemini disponible ({last_error})")
+
+    def enrich(self, analysis: dict, work: Path) -> dict:
+        """Ajoute étiquettes et intérêt aux moments forts. Ne lève jamais d'exception."""
+        route = self._route()
+        if not route or not analysis.get("highlights"):
+            return analysis
+        if route == "api":
+            today = time.strftime("%Y-%m-%d")
+            if self.guard.db and self.guard.db.kv_get("gemini.quota_exhausted") == today:
+                self.log("Quota gratuit Gemini épuisé aujourd'hui : analyse locale.")
+                return analysis
+            cost_class = "free_tier_api" if self.conf.get("free_tier_only", True) else "paid_api"
+        else:
+            cost_class = "subscription_cli"
+        if not self.guard.authorize("gemini", "qualification des moments forts", cost_class):
+            self.log("Gemini refusé par le garde-fou des coûts : analyse locale conservée.")
+            return analysis
+        try:
+            frames = self._frames(analysis, work)
+            if not frames:
+                return analysis
+            if route == "cli":
+                extra = ["-m", self.conf["model"]] if self.conf.get("model") else []
+                refs = " ".join(f"@{path.name}" for _, path in frames)  # noms sans espace
+                text = run_cli(self.conf["command"], self._prompt(analysis, frames, True),
+                               int(self.conf["timeout"]), extra, cwd=work,
+                               arg_prompt=f"Images des moments : {refs} . {SHORT_INSTRUCTION}")
+            else:
+                text = self._call_api(self._prompt(analysis, frames, False), frames)
+            applied = apply_verdicts(analysis, extract_json(text), "gemini")
+            analysis["ai"] = {"provider": "gemini", "route": route, "moments_qualifiés": applied}
+            self.log(f"Gemini ({route}) : {applied} moments qualifiés.")
+        except QuotaExhausted as exc:
+            if self.guard.db:
+                self.guard.db.kv_set("gemini.quota_exhausted", time.strftime("%Y-%m-%d"))
+            self.log(f"Gemini : {exc}. Analyse locale jusqu'à demain.")
+        except Exception as exc:  # jamais bloquant
+            self.log(f"Gemini indisponible ({type(exc).__name__}: {str(exc)[:120]}) : "
+                     "analyse locale conservée.")
+        return analysis
+
+
+def apply_verdicts(analysis: dict, verdicts, provider: str) -> int:
+    """Applique les étiquettes et l'intérêt donnés par une IA. Ignore tout ce qui est invalide."""
+    applied = 0
+    for v in verdicts if isinstance(verdicts, list) else []:
+        if not isinstance(v, dict):
+            continue
+        i = v.get("index")
+        if not isinstance(i, int) or not 0 <= i < len(analysis["highlights"]):
+            continue
+        h = analysis["highlights"][i]
+        label = str(v.get("label", "")).strip().lower()
+        label = SYNONYMS.get(label, label)
+        interest = v.get("interest")
+        if label in LABELS:
+            h["label"] = label
+        if isinstance(interest, (int, float)) and 0 <= interest <= 10:
+            # score = base des signaux × (0,5 + intérêt / 10) : de ×0,5 à ×1,5
+            h["score"] = round(h["score"] * (0.5 + float(interest) / 10), 4)
+            why = str(v.get("why") or v.get("comment") or "")[:200]
+            h["meta"] = {**h.get("meta", {}), "ai_interest": interest, "ai_why": why,
+                         "comment": why}
+        h["source"] = provider
+        applied += 1
+    analysis["highlights"].sort(key=lambda h: h["score"], reverse=True)
+    return applied
+
+
+class ClaudeAnalyst(GeminiAnalyst):
+    """Même travail que Gemini, fait par Claude via le CLI de ton abonnement (sans clé API).
+
+    Claude ouvre lui-même les images avec son outil de lecture. Tous ses autres outils
+    (commandes, modification de fichiers, web) sont interdits pendant cet appel.
+    """
+
+    def __init__(self, cfg, guard: CostGuard, log=print):
+        super().__init__(cfg, guard, log)
+        self.conf = cfg["ai"]["claude"]
+
+    def available(self) -> bool:
+        return (self.conf["mode"] in ("auto", "cli") and self.conf.get("vision", True)
+                and bool(shutil.which(self.conf["command"])))
+
+    def _prompt(self, analysis: dict, frames: list[tuple[int, Path]], with_refs: bool) -> str:
+        names = ", ".join(path.name for _, path in frames)
+        return (super()._prompt(analysis, frames, False).replace(
+            "tu as plusieurs images", "ouvre et regarde (outil Read) les images")
+            + f"\nFichiers images, dans le dossier courant : {names}.\n"
+            "N'invente rien que l'image ne montre pas : sans élimination visible, ce n'est "
+            "pas un kill.")
+
+    def enrich(self, analysis: dict, work: Path) -> dict:
+        if not self.available() or not analysis.get("highlights"):
+            return analysis
+        if not self.guard.authorize("claude", "qualification des moments forts",
+                                    "subscription_cli"):
+            return analysis
+        try:
+            frames = self._frames(analysis, work)
+            if not frames:
+                return analysis
+            extra = ["--allowedTools", "Read",
+                     "--disallowedTools", "Bash", "Edit", "Write", "WebFetch", "WebSearch"]
+            if self.conf.get("model"):
+                extra += ["--model", self.conf["model"]]
+            text = run_cli(self.conf["command"], self._prompt(analysis, frames, False),
+                           int(self.conf["timeout"]), extra, cwd=work)
+            applied = apply_verdicts(analysis, extract_json(text), "claude")
+            analysis["ai"] = {"provider": "claude", "route": "cli", "moments_qualifiés": applied}
+            self.log(f"Claude (abonnement) : {applied} moments qualifiés.")
+        except Exception as exc:  # jamais bloquant
+            self.log(f"Claude indisponible pour l'analyse ({type(exc).__name__}: "
+                     f"{str(exc)[:120]}) : analyse locale conservée.")
+        return analysis
+
+
+ANALYSTS = {"gemini": GeminiAnalyst, "claude": ClaudeAnalyst}
+
+
+def qualify_moments(cfg, guard: CostGuard, analysis: dict, work: Path, log=print) -> dict:
+    """Essaie les IA dans l'ordre de `ai.vision_order` ; s'arrête à la première qui répond."""
+    for name in cfg["ai"].get("vision_order", ["gemini", "claude"]):
+        cls = ANALYSTS.get(name)
+        if cls is None:
+            continue
+        analyst = cls(cfg, guard, log)
+        if not analyst.available():
+            continue
+        analysis = analyst.enrich(analysis, work / name)
+        if analysis.get("ai"):
+            break
+    return analysis
+
+
+class ClaudeDirector:
+    """Textes du montage écrits par Claude (CLI de l'abonnement). L'emballage YouTube
+    (titres, description, chapitres) est dans packaging.py."""
+
+    def __init__(self, cfg, guard: CostGuard, log=print):
+        self.cfg, self.guard, self.log = cfg, guard, log
+        self.conf = cfg["ai"]["claude"]
+
+    def available(self) -> bool:
+        return self.conf["mode"] in ("auto", "cli") and bool(shutil.which(self.conf["command"]))
+
+    def creative_texts(self, stem: str, analyses: list[dict]) -> dict:
+        """Accroche, mots d'impact et titre écrits par Claude. {} si indisponible.
+
+        Format : {"short": {"hook", "captions"}, "long": {"title"}}.
+        """
+        if not self.available():
+            return {}
+        if not self.guard.authorize("claude", "textes du montage", "subscription_cli"):
+            return {}
+        events = []
+        for a in analyses:
+            for e in sorted(a.get("events", []), key=lambda e: -e.get("strength", 0))[:10]:
+                events.append(f"{e['kind']} à {e['t']:.0f}s (force {e.get('strength', 0):.2f})")
+        best = []
+        for a in analyses:  # ce que l'IA / l'OCR ont compris des meilleurs moments
+            for h in a.get("highlights", [])[:5]:
+                why = (h.get("meta") or {}).get("ai_why") or (h.get("meta") or {}).get("why", "")
+                best.append(f"{h.get('label', '')} à {h['peak']:.0f}s"
+                            + (f" : {why}" if why else ""))
+        prompt = (
+            "Tu écris les textes à l'écran d'un montage gaming TikTok en français, style "
+            "punchy. Meilleurs moments de la vidéo « " + stem + " » (le premier ouvre le "
+            "Short) :\n" + "\n".join(best) + "\nÉvénements détectés :\n" + "\n".join(events) +
+            "\nL'accroche (3 à 7 mots) est une promesse ou une question sur le premier moment, "
+            "sans le dévoiler (ex. « 1 contre 4… », « Il aurait dû rester caché »)."
+            "\nRéponds UNIQUEMENT en JSON : {\"hook\": \"accroche de 3 à 7 mots\", "
+            "\"captions\": [\"mot d'impact de 1 à 3 mots\", ...6 éléments], "
+            "\"title\": \"titre court pour YouTube\"}. Pas de hashtags, pas d'emoji. "
+            "N'invente pas de kill ni de victoire : décris l'action.")
+        try:
+            extra = ["--model", self.conf["model"]] if self.conf.get("model") else []
+            data = extract_json(run_cli(self.conf["command"], prompt, int(self.conf["timeout"]),
+                                        extra, cwd=self.cfg.work_dir))
+        except Exception as exc:
+            self.log(f"Textes Claude indisponibles ({type(exc).__name__}) : textes locaux.")
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        hook = str(data.get("hook", ""))[:48]
+        caps = [str(c)[:22] for c in data.get("captions", []) if isinstance(c, str) and c][:8]
+        title = str(data.get("title", ""))[:60]
+        self.log("Textes du montage écrits par Claude.")
+        return {"short": {"hook": hook, "captions": caps} if hook else {"captions": caps},
+                "long": {"title": title} if title else {}}

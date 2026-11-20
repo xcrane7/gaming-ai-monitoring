@@ -1,0 +1,5 @@
+numpy>=1.24
+opencv-python-headless>=4.8
+Pillow>=10.0
+# Lecture du texte à l'écran (OCR) : facultative, dans requirements-ocr.txt
+# (installée à part par scripts\install.bat : son échec ne bloque pas le reste).
