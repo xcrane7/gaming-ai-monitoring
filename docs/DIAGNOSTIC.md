@@ -5,6 +5,20 @@ Il faut travailler la qualité artistique, l'intelligence du montage et la véri
 visuelle. On traite les points un par un, sans toucher au code tant qu'un point n'est pas
 validé par l'utilisateur.
 
+## 0. Référence fournie par l'utilisateur (à confirmer)
+Short GTA 6 de 42 s, 9:16, compte TikTok « @zouna.gta ». Ce n'est **pas** un montage de
+moments forts mais une vidéo **explicative** :
+- écran partagé : en haut un panneau animé (mots-clés en deux couleurs « Plafond / secret »,
+  compteurs « Épargne 5 000 $ → 174 000 $ », « Perdu 168 $ → 0 $ », cartes d'image : écran
+  de téléphone, illustration), en bas du gameplay GTA 6 qui illustre le sujet (banque,
+  conduite, garage, bateau), un plan toutes les ~4 s, fine ligne rose/cyan entre les deux ;
+- une couleur par idée (vert = épargne, cyan = plafond, rouge = perte, rose = secret),
+  police ronde très grasse, fond flouté ; pas de tremblement, flash ni particules ;
+- portée par la narration (son moyen −16,8 dB) : les mots à l'écran suivent le texte dit ;
+- fin : question aux spectateurs (« Quel palier ? ») pour les commentaires, « abonne-toi ».
+Conséquence : le logiciel actuel (montage d'action, effets « gaming ») ne produit pas ce
+genre de vidéo. À confirmer avec l'utilisateur avant tout développement.
+
 ## 1. Intelligence visuelle : comprendre le gameplay pour choisir les moments
 **Vérifié dans le code :** sans IA, le choix repose sur le son (tirs, explosions,
 réactions), le mouvement de l'image, les changements de plan, les menus et l'OCR (texte à
