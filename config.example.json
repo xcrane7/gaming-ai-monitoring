@@ -4,10 +4,12 @@
     "enabled": true,
     "channel_name": "",
     "accent_color": "",
-    "hud": true,
+    "hud": false,
     "slowmo_audio": "keep_pitch",
     "speed_up_dead_time": true,
-    "dead_time_speed": 1.7
+    "dead_time_speed": 1.7,
+    "ai_captions": false,
+    "focus_ring": true
   },
   "short": {
     "target_seconds": 45,
@@ -74,7 +76,12 @@
     "render.supersample": "1.15 : punch-in net (zoom dans une image plus grande) ; 1.0 = désactivé, plus rapide",
     "long.jl_cuts": "secondes d avance du son à chaque coupe du format long (0 = désactivé)",
     "youtube.game_name": "nom du jeu pour les titres et hashtags (sinon déduit du profil de jeu `games` ; jamais le nom de fichier)",
-    "youtube.enabled": "emballage YouTube : 3 titres, description, chapitres, hashtags, miniature PNG 1280x720 dans OUTPUT/reports/<vidéo>.metadata.json"
+    "youtube.enabled": "emballage YouTube : 3 titres, description, chapitres, hashtags, miniature PNG 1280x720 dans OUTPUT/reports/<vidéo>.metadata.json",
+    "style.hud": "HUD façon caméscope (REC, chrono, coins), désactivé par défaut",
+    "style.ai_captions": "mots d'impact écrits par Claude sans entendre la vidéo (désactivé : clichés)",
+    "style.focus_ring": "cible animée qui se resserre sur l'action au climax et sur les kills confirmés",
+    "short.layout": "auto = plein écran (recadrage centré, ou qui suit l'action si elle bouge) | track | crop | blur | hybrid (zone 4:5 entre deux bandes floues)",
+    "qa.visual": "contrôle visuel des images rendues : images floues, brûlées, ternes ; un refus relance un rendu prudent"
   },
   "analysis": {
     "rerank": true,
@@ -114,5 +121,10 @@
   "youtube": {
     "enabled": true,
     "game_name": ""
+  },
+  "qa": {
+    "visual": true,
+    "max_burnt_ratio": 0.06,
+    "max_blurred_ratio": 0.12
   }
 }

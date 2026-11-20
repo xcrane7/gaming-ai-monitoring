@@ -37,8 +37,8 @@ def _apply_look(rgb: np.ndarray, look: str, strength: float) -> np.ndarray:
         shadow = (1 - luma)[..., None]
         high = luma[..., None]
         out = out + shadow * np.array([-0.05, 0.02, 0.06]) + high * np.array([0.06, 0.01, -0.05])
-        out = saturate(out, 1.15)
-        out = s_curve(out, 0.35)
+        out = saturate(out, 1.22)
+        out = s_curve(out, 0.45)
     elif look == "neon_night":
         out = saturate(out, 1.35)
         out = out + (1 - luma)[..., None] * np.array([0.03, -0.03, 0.07])
@@ -48,9 +48,9 @@ def _apply_look(rgb: np.ndarray, look: str, strength: float) -> np.ndarray:
         out = saturate(out, 1.05)
         out = s_curve(out, 0.25)
     elif look == "cold_tactical":
-        out = out * np.array([0.93, 1.0, 1.07])
-        out = saturate(out, 0.82)
-        out = s_curve(out, 0.5)
+        out = out * np.array([0.95, 1.0, 1.06])
+        out = saturate(out, 1.08)  # froid mais pas terne (0.82 rendait le jeu grisâtre)
+        out = s_curve(out, 0.6)
     elif look == "punchy":
         out = saturate(out, 1.4)
         out = s_curve(out, 0.45)
@@ -94,4 +94,5 @@ def choose_look(profile: dict, seed: int = 0) -> str:
 def grade_filter(cube: Path, strength_eq: float = 1.0) -> str:
     """Fragment FFmpeg : LUT + petite accentuation de netteté."""
     # chemin relatif : le rendu s'exécute dans le dossier de travail (pas de « : » Windows)
-    return f"lut3d=file={cube.name}:interp=tetrahedral,unsharp=5:5:{0.35 * strength_eq:.2f}"
+    # accentuation sur la luminance seulement (pas de grain coloré)
+    return f"lut3d=file={cube.name}:interp=tetrahedral,unsharp=5:5:{0.6 * strength_eq:.2f}:5:5:0"

@@ -32,7 +32,7 @@ def impact_flash(times: list[tuple[float, float]], intensity: float = 1.0) -> st
     """times = [(instant, force)]."""
     if not times:
         return ""
-    terms = [f"{_f(0.28 * f * intensity)}*({expr_decay([t], 10)})" for t, f in times]
+    terms = [f"{_f(0.17 * f * intensity)}*({expr_decay([t], 10)})" for t, f in times]
     return f"eq=brightness='{'+'.join(terms)}':eval=frame"
 
 

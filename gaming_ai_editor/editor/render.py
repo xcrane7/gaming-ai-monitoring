@@ -238,7 +238,7 @@ class Renderer:
         fc = self.cfg[plan.format]
         layout = (plan.style or {}).get("layout") or fc.get("layout", "hybrid")
         if layout == "auto":
-            layout = "hybrid"
+            layout = "crop"
         inputs = ["-ss", f"{seg.start:.6f}", "-t", f"{seg.duration + 0.5:.6f}", "-i", seg.source]
         leads = self.audio_leads(plan)
         lead = leads[index]

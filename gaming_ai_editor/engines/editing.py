@@ -118,8 +118,11 @@ def style_dna(analyses: list[dict], cfg, fmt: str, key: str) -> dict:
     intensity = round(energy * (1.0 if fmt == "short" else float(st["long_intensity"])), 3)
     layout = cfg["short"].get("layout", "auto") if fmt == "short" else "fit"
     if layout == "auto":
+        # plein écran 9:16 : l'action est au centre (viseur des FPS) -> recadrage centré ;
+        # elle se déplace -> recadrage qui la suit. Le mode « hybrid » (zone nette 4:5 entre
+        # deux bandes floues) n'occupait que 70 % de la hauteur : seulement sur demande.
         spread = float((analyses[0].get("focus") or {}).get("spread", 0.0))
-        layout = "track" if spread > 0.07 else "hybrid"
+        layout = "track" if spread > 0.07 else "crop"
     look = color.choose_look(prof, seed) if prof else "teal_orange"
     return {
         "seed": seed, "palette_name": name, "palette": palette, "font": font,
@@ -434,16 +437,16 @@ class Director:
                 if "flash" in ev["fx"] or "climax" in ev["fx"]:
                     flashes.append((t, f))
                 for name, length in (("rgb_split", 0.18), ("glitch", 0.22), ("glow", 0.4),
-                                     ("distortion", 0.2), ("motion_blur", 0.6)):
+                                     ("distortion", 0.2), ("motion_blur", 0.22)):
                     if name in ev["fx"]:
-                        start = t - (0.05 if name != "motion_blur" else 0.3)
+                        start = t - (0.05 if name != "motion_blur" else 0.08)
                         windows.setdefault(name, []).append((round(max(0.0, start), 4),
                                                              round(min(d, t + length), 4)))
                 if "climax" in ev["fx"]:
                     windows.setdefault("glitch", []).append((round(max(0.0, t - 0.32), 4),
                                                              round(max(0.0, t - 0.2), 4)))
             for t, _f in shakes:  # traînée de mouvement pendant les tremblements
-                windows.setdefault("motion_blur", []).append((t, round(min(d, t + 0.25), 4)))
+                windows.setdefault("motion_blur", []).append((t, round(min(d, t + 0.15), 4)))
             ramp = seg.speed_ramp()
             smooth = None
             if ramp and ramp.slow:  # zoom avant pendant un ralenti, pas pendant une accélération
@@ -457,7 +460,8 @@ class Director:
                 "rotate": any(f > 0.7 for _, f in shakes),
             }
             seg.vfx = {"flash": flashes, **windows,
-                       "cinematic_blur": i == 0 or self.rng.random() < 0.25}
+                       # pas sur l'ouverture : l'accroche doit être nette dès la 1re image
+                       "cinematic_blur": seg.role == "climax"}
             a = self.by_path.get(seg.source, {})
             if self.dna["layout"] == "track" and a.get("focus", {}).get("x"):
                 seg.focus = [[round(t, 3), round(x, 3)]
@@ -573,7 +577,8 @@ class Director:
         # pendant l'accroche, pas de mot d'impact : deux gros textes à la fois se lisent mal
         hook_until = max([x["end"] for x in g if x["type"] == "hook" and not x.get("reprise")],
                          default=0.0)
-        captions = list(self.texts.get("captions") or [])
+        # mots d'impact écrits par l'IA sans entendre la vidéo : clichés, désactivés par défaut
+        captions = list(self.texts.get("captions") or []) if st.get("ai_captions") else []
         for i, seg in enumerate(plan.segments):
             a = self.by_path.get(seg.source, {})
             focus = a.get("focus", {})
@@ -586,6 +591,11 @@ class Director:
                     x = float(focus["x"][k])
                 y = 0.45 if vertical else 0.5
                 s = dna["seed"] + int(t * 100)
+                # cible sur le moment clé : climax, ou kill/headshot confirmé (IA ou OCR)
+                if st.get("focus_ring", True) and ("climax" in fx or ev.get("label") in
+                                                   ("kill", "headshot", "clutch")):
+                    g.append({"type": "focus_ring", "start": t, "x": x, "y": y, "life": 0.9,
+                              "radius": 0.12 if vertical else 0.08})
                 if "explosion_gfx" in fx:
                     g.append({"type": "explosion", "start": t, "x": x, "y": y, "seed": s})
                 if "sparks_gfx" in fx:
@@ -619,7 +629,7 @@ class Director:
                     style = "slam" if "climax" in fx or ev["kind"] == "explosion" else \
                         self.rng.choice(["pop", "pop", "slide"])
                     g.append({"type": "word", "start": t, "end": t + (1.4 if "climax" in fx else 1.0),
-                              "text": str(text)[:22], "style": style,
+                              "text": str(text).upper()[:22], "style": style,
                               "pos": [0.47, 0.56] if vertical else [0.5, 0.7],
                               "angle": dna["word_angle"] * (1 if len(g) % 2 else -1),
                               "size": 150 if "climax" in fx else 120})

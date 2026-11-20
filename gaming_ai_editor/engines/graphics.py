@@ -706,6 +706,46 @@ class Shockwave(Element):
                      outline=c.color("accent", int(150 * (1 - p))), width=max(1, width // 2))
 
 
+class FocusRing(Element):
+    """Cible qui se resserre sur l'action : un grand cercle se referme en 0,3 s autour du
+    point d'action, quatre crochets se verrouillent, puis tout pulse et disparaît. Guide
+    l'œil vers le moment clé (climax, kill confirmé) sans masquer le jeu."""
+    layer = 5
+
+    def __init__(self, item, ctx):
+        super().__init__(item, ctx)
+        self.end = self.start + float(item.get("life", 0.9))
+
+    def draw(self, canvas, draw, t):
+        c = self.ctx
+        life = self.end - self.start
+        p = (t - self.start) / life
+        x, y = self.item.get("x", 0.5) * c.width, self.item.get("y", 0.45) * c.height
+        base = min(c.width, c.height)
+        lock = min(1.0, (t - self.start) / 0.3)  # 0 -> 1 : la cible se referme
+        r_end = base * float(self.item.get("radius", 0.13))
+        r = r_end * (1 + 2.2 * (1 - ease_out_cubic(lock)))
+        fade = 1.0 if p < 0.7 else max(0.0, (1 - p) / 0.3)
+        pulse = 1 + 0.06 * math.sin(max(0.0, t - self.start - 0.3) * 18) * (lock >= 1)
+        rr = r * pulse
+        w = max(2, int(9 * c.s))
+        draw.ellipse((x - rr, y - rr, x + rr, y + rr), outline=c.color("shadow", int(140 * fade)),
+                     width=w + max(2, int(6 * c.s)))  # contour sombre : lisible sur fond clair
+        draw.ellipse((x - rr, y - rr, x + rr, y + rr), outline=c.color("accent", int(255 * fade)),
+                     width=w)
+        # crochets : partent de loin et se verrouillent sur le cercle
+        k = rr * (1.35 + 0.9 * (1 - ease_out_cubic(lock)))
+        arm = rr * 0.42
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            cx, cy = x + sx * k * 0.72, y + sy * k * 0.72
+            pts = [(cx, cy + -sy * arm), (cx, cy), (cx + -sx * arm, cy)]
+            draw.line(pts, fill=c.color("shadow", int(140 * fade)), width=w + max(2, int(6 * c.s)))
+            draw.line(pts, fill=c.color("text", int(255 * fade)), width=w)
+        # point central
+        d = max(3, int(7 * c.s))
+        draw.ellipse((x - d, y - d, x + d, y + d), fill=c.color("accent", int(230 * fade)))
+
+
 @lru_cache(maxsize=16)
 def radial_glow(size: int, color: tuple) -> Image.Image:
     yy, xx = np.mgrid[0:size, 0:size]
@@ -877,6 +917,7 @@ ELEMENTS = {
     "victory": Victory, "title": Title, "lower_third": LowerThird, "scoreboard": Scoreboard,
     "hud": Hud, "progress": Progress, "sparks": Particles, "shockwave": Shockwave,
     "explosion": Explosion, "embers": Embers, "subscribe": Subscribe, "captions": Captions,
+    "focus_ring": FocusRing,
 }
 
 

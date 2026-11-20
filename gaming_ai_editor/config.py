@@ -105,7 +105,13 @@ DEFAULTS: dict[str, Any] = {
         "long_intensity": 0.5,  # effets plus discrets sur le format long
         "max_ramps_short": 1,
         "max_ramps_long": 2,
-        "hud": True,
+        # HUD façon caméscope (REC, chrono, coins) : illisible sur mobile, en conflit avec le
+        # HUD du jeu ; disponible mais désactivé par défaut
+        "hud": False,
+        # mots d'impact écrits par Claude sans la transcription : désactivés (clichés)
+        "ai_captions": False,
+        # cible animée qui se resserre sur l'action au climax et sur les kills confirmés
+        "focus_ring": True,
         "music_generate": True,  # musique générée si assets/music est vide
         "beat_sync": True,
         "grade": True,
@@ -170,6 +176,12 @@ DEFAULTS: dict[str, Any] = {
         "max_silence_ratio": 0.5,
         "loudness_tolerance": 3.0,
         "duration_tolerance": 1.0,
+        # contrôle visuel des images rendues (qa/visual.py) : refuse un montage plus flou
+        # que le jeu ou avec des images brûlées ; un refus relance un rendu « prudent »
+        "visual": True,
+        "max_blurred_ratio": 0.12,
+        "max_burnt_ratio": 0.06,
+        "max_flat_ratio": 0.15,
     },
     # Profils de jeux pour la lecture du texte à l'écran (facultatif). Exemple :
     # "fortnite": {"match": ["fortnite"], "regions": {"kill_feed": [0.0, 0.55, 0.35, 0.8]},

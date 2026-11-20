@@ -146,6 +146,7 @@ def test_every_graphic_element_renders(tmp_path):
         {"type": "sparks", "start": 1.0, "x": 0.5, "y": 0.5},
         {"type": "shockwave", "start": 1.0, "x": 0.5, "y": 0.5},
         {"type": "explosion", "start": 1.2, "x": 0.5, "y": 0.5},
+        {"type": "focus_ring", "start": 1.0, "x": 0.5, "y": 0.45},
         {"type": "captions", "start": 0.2, "end": 2.6,
          "words": [{"t0": 0.2, "t1": 0.9, "w": "Regarde", "line": 0},
                    {"t0": 0.9, "t1": 2.6, "w": "ça", "line": 0}]},
@@ -199,7 +200,9 @@ def test_director_adapts_effects_to_events(cfg):
     assert plan.music.get("drop_at") and abs(plan.music["drop_at"] / beat
                                              - round(plan.music["drop_at"] / beat)) < 1e-3
     kinds = {g["type"] for g in plan.graphics}
-    assert {"hook", "hud", "progress", "explosion", "word", "combo"} <= kinds
+    assert {"hook", "progress", "explosion", "word", "combo", "focus_ring"} <= kinds
+    assert "hud" not in kinds, "HUD caméscope désactivé par défaut"
+    assert all(g["text"] == g["text"].upper() for g in plan.graphics if g["type"] == "word")
     assert {c["kind"] for c in plan.sfx} >= {"boom", "whoosh", "riser"}
 
 
@@ -446,3 +449,35 @@ def test_critic_tool_produces_frames_and_checklist(cfg, tmp_path):
     assert set(rep["avant_après"]["grille"]) == lines
     md = (tmp_path / "critique" / "critique.md").read_text(encoding="utf-8")
     assert "accroche" in md and "/10" in md
+
+
+def test_layout_auto_fills_the_vertical_frame(cfg):
+    """Plein écran 9:16 : recadrage centré si l'action est au centre (viseur), suivi sinon ;
+    la zone 4:5 entre bandes floues (hybrid) seulement sur demande."""
+    a = _fake_analysis("/x/v.mp4")
+    assert editing.style_dna([a], cfg, "short", "k")["layout"] == "crop"
+    a["focus"]["spread"] = 0.2
+    assert editing.style_dna([a], cfg, "short", "k")["layout"] == "track"
+    cfg.data["short"]["layout"] = "hybrid"
+    assert editing.style_dna([a], cfg, "short", "k")["layout"] == "hybrid"
+
+
+def test_ai_impact_words_are_off_by_default(cfg):
+    a = _fake_analysis("/x/v.mp4")
+    texts = {"captions": ["CLICHÉ AVEUGLE"] * 6}
+    plan = build_plan("short", [a], cfg)
+    editing.direct(plan, [a], cfg, dict(texts), "k", None)
+    words = [g["text"] for g in plan.graphics if g["type"] == "word"]
+    assert words and "CLICHÉ AVEUGLE" not in words
+    cfg.data["style"]["ai_captions"] = True
+    plan = build_plan("short", [a], cfg)
+    editing.direct(plan, [a], cfg, dict(texts), "k", None)
+    assert "CLICHÉ AVEUGLE" in [g["text"] for g in plan.graphics if g["type"] == "word"]
+
+
+def test_looks_add_color_instead_of_removing_it(tmp_path):
+    """Un look « froid » ne doit plus rendre le jeu grisâtre (saturation 0,82 auparavant)."""
+    rgb = np.array([[0.7, 0.35, 0.3], [0.3, 0.45, 0.7], [0.4, 0.6, 0.35]])
+    sat = lambda x: float((x.max(axis=1) - x.min(axis=1)).mean())  # noqa: E731
+    for look in color.LOOKS:
+        assert sat(color._apply_look(rgb, look, 1.0)) >= sat(rgb) * 0.98, look

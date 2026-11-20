@@ -145,6 +145,13 @@ def run_qa(path: str | Path, plan: dict, cfg, originals_intact: bool | None = No
             motion_score = motion["score"]
         except Exception as exc:  # une mesure qui plante ne doit pas masquer le rendu
             checks.append(_check("contrôle du montage animé", WARN, f"mesure impossible : {exc}"))
+    if qa.get("visual", True) and plan.get("segments"):
+        from .visual import run_visual_qa
+
+        try:
+            checks.extend(run_visual_qa(path, plan, qa))
+        except Exception as exc:
+            checks.append(_check("contrôle visuel", WARN, f"mesure impossible : {exc}"))
     if originals_intact is not None:
         checks.append(_check("originaux intacts", PASS if originals_intact else FAIL,
                              "Empreintes identiques avant/après." if originals_intact
