@@ -60,6 +60,24 @@ découvertes sont seulement listées ; les réglages internes du motion design s
 et activés automatiquement.
 **À décider :** quelles technologies brancher en priorité, une fois les points 1 à 4 fixés.
 
+## Second diagnostic (autre IA), vérifié dans le code
+1. Skills Melvynx/video-agent-skills : licence MIT. Flux de travail complet pour créateurs
+   (Node 20, Chromium, whisper.cpp ~0,6 Go) ; /steal mesure le style d'une vidéo avec ffmpeg.
+   Des services payants y sont optionnels (Treg, ElevenLabs, Codex) : à laisser coupés.
+   Remotion n'y figure pas ; sa licence n'est pas libre (gratuite pour particuliers et petites
+   structures, à vérifier) : contraire à la règle des licences d'AGENTS.md.
+2. « Mots d'impact » de ClaudeDirector.creative_texts : confirmé, écrits sans la transcription.
+3. Sous-titres : déjà en mode auto, word_timestamps déjà actif, scripts/install_subtitles.bat
+   existe. Il reste à l'exécuter sur le PC de l'utilisateur.
+4. Moteur d'animation : l'ASS ne sert qu'au style « classic » ; le style par défaut dessine
+   avec Pillow. Punch-in, tremblement et flash existent déjà (FFmpeg) ; l'arrêt sur image
+   avec cercle/flèche n'existe pas. Un rendu HTML/CSS dans Chromium (licences BSD/Apache)
+   peut remplacer Pillow pour la piste transparente déjà incrustée par FFmpeg.
+5. Vérification visuelle sur un rendu réel : déjà une règle de CLAUDE.md, à appliquer à
+   chaque étape. Les tests restent obligatoires (règle du projet).
+Conflit : les effets du point 4 (tremblement, flash, zoom) vont à l'opposé de la vidéo de
+référence de l'utilisateur (explicative, sans aucun de ces effets).
+
 ## Décisions prises
 **Point 1 (en cours)**
 - Jeux : FPS et GTA 6. Deux définitions du « bon moment » : FPS = éliminations,
