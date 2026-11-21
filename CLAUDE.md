@@ -30,8 +30,8 @@ les FPS), HUD caméscope coupé par défaut, mots d'impact de l'IA coupés (opti
 `style.ai_captions`), looks qui ne désaturent plus, cible animée `focus_ring` sur le climax
 et les kills confirmés, plus d'image blanche pendant l'accroche. QA visuelle
 (`qa/visual.py`) : images brûlées (une seule dans les 3 premières secondes = refus), flou
-AJOUTÉ par le montage (le flou de mouvement du jeu, 30 % sur ce FPS, est mesuré sur la
-source et retiré), images ternes.
+ajouté par le montage (avertissement seulement : comparaison image par image avec le jeu,
+faux positifs constatés sur le gameplay réel), images ternes.
 
 Pistes restantes (non faites) : profils de jeux réels (zones et mots-clés), piste micro séparée,
 rires ; vérifier sur de vrais gameplays de l'utilisateur (un seul gameplay réel testé, sans voix
