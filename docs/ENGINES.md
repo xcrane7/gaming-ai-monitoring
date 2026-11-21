@@ -84,6 +84,15 @@ Sans Gemini, le logiciel ne prétend jamais qu'un événement est un kill : la
 notification dit « Explosion » ou « Impact ». Ce sont les seules étiquettes que
 le son et l'image permettent d'affirmer.
 
+### Contrôle qualité visuel (qa/visual.py)
+Mesuré sur les images rendues, pas sur le plan : images brûlées (2 images/s sur toute la
+vidéo, 15 images/s sur les 3 premières secondes : une seule image blanche dans l'accroche
+est un refus), images floues ajoutées par le montage (comparées aux mêmes passages de la
+source : les jeux ont leur propre flou de mouvement), images ternes. Un refus relance le
+rendu « prudent ». Une comparaison directe de netteté rendu/source a été essayée puis
+abandonnée : le rendu ajoute des détails fins (particules, accentuation, compression) et
+paraissait « plus net » que le jeu même flouté.
+
 ## 4. Statuts des skills
 
 `CANDIDATE` → `TESTING` → `VALIDATED` / `REJECTED` → `ACTIVE` → (régression) → `QUARANTINE`

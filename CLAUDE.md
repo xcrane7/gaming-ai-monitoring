@@ -24,6 +24,15 @@ checklist `edit-critic` passée de 4/6 à 6/6 ; climax de 21 % à 84 % de la vid
 de 18 s remplacé par un cold open de 1,8 s ; clip sans action retiré ; 1 image surexposée au lieu
 de 3. Ne pas régresser.
 
+Refonte « pro » (branche feature/pro-motion-overhaul, mesurée sur le même gameplay) :
+cadrage vertical plein écran (le mode auto donnait une zone 4:5 à 70 % de la hauteur pour
+les FPS), HUD caméscope coupé par défaut, mots d'impact de l'IA coupés (option
+`style.ai_captions`), looks qui ne désaturent plus, cible animée `focus_ring` sur le climax
+et les kills confirmés, plus d'image blanche pendant l'accroche. QA visuelle
+(`qa/visual.py`) : images brûlées (une seule dans les 3 premières secondes = refus), flou
+AJOUTÉ par le montage (le flou de mouvement du jeu, 30 % sur ce FPS, est mesuré sur la
+source et retiré), images ternes.
+
 Pistes restantes (non faites) : profils de jeux réels (zones et mots-clés), piste micro séparée,
 rires ; vérifier sur de vrais gameplays de l'utilisateur (un seul gameplay réel testé, sans voix
 ni texte de jeu : l'OCR et les réactions ne sont validés que sur vidéos de test).

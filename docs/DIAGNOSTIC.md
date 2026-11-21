@@ -89,3 +89,11 @@ référence de l'utilisateur (explicative, sans aucun de ces effets).
   une clé gratuite AI Studio reste possible en secours. OpenCode : pas nécessaire.
 - Prochaine étape : un vrai gameplay FPS et un vrai gameplay GTA 6 de l'utilisateur pour
   régler la détection sur ses jeux.
+
+**Refonte motion (branche feature/pro-motion-overhaul, demandée par l'utilisateur)**
+Mesuré sur le rendu réel du gameplay FPS, images regardées :
+- cadrage : le mode auto choisissait la zone 4:5 (70 % de la hauteur) quand l'action est
+  centrée -> plein écran ; HUD caméscope coupé ; mots de l'IA écrits à l'aveugle coupés ;
+- image blanche à 1,5 s (fondu au blanc après le cold open) -> zoom ;
+- le « flou » de l'ancien rendu venait surtout du jeu (30 % des mêmes passages bruts) :
+  diagnostic initial corrigé, la QA ne compte que le flou ajouté.
