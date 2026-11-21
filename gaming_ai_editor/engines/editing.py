@@ -397,7 +397,15 @@ class Director:
                 continue
             a, b = ev["t"] - 0.25, ev["t"] + 0.55
             seg.ramp = [round(a, 4), round(b, 4), 0.35]
-            ev["fx"] = [f for f in ev["fx"] if f != "shake"] + ["climax", "sfx_riser"]
+            d = ev.get("direction") or {}
+            if d.get("class") in ("deplacement", "temps_mort", None):
+                # le récit en fait LE moment de la vidéo : réalisation d'action spectaculaire
+                # (mise en valeur seulement, aucune affirmation : ça ne devient pas un kill)
+                ev["fx"] = direction.recipe("spectaculaire", "moyen") + ev["fx"]
+                ev["direction"] = {**d, "class": "spectaculaire", "tier": "fort",
+                                   "importance": max(0.75, float(d.get("importance", 0))),
+                                   "why": f"{d.get('why', '')} · promu : climax du récit"}
+            ev["fx"] = [f for f in dict.fromkeys(ev["fx"]) if f != "shake"] + ["climax", "sfx_riser"]
             if "explosion_gfx" not in ev["fx"] and "sparks_gfx" not in ev["fx"]:
                 ev["fx"].append("sparks_gfx")
             used.add(id(seg))

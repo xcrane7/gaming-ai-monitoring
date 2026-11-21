@@ -114,3 +114,20 @@ def test_claude_hook_rejected_falls_back_to_local_template(cfg):
     assert plan.hook and "kill" not in plan.hook.lower()
     assert plan.hook in editing.HOOK_TEMPLATES["explosion"] + editing.HOOKS
     assert any("Accroche de l'IA refusée" in n for n in plan.notes)
+
+
+def test_the_climax_event_is_always_emphasized(cfg):
+    """Défaut vu sur le rendu réel : le son du climax était faible, l'événement classé
+    « déplacement » perdait sa mise en valeur. Le rôle narratif l'emporte (sans affirmer)."""
+    a = _fake_analysis("/x/v.mp4", events=[
+        {"t": 10.0, "kind": "impact", "strength": 0.35},   # meilleur moment, son faible
+        {"t": 30.0, "kind": "explosion", "strength": 0.8},
+        {"t": 50.0, "kind": "impact", "strength": 0.7}])
+    plan = build_plan("short", [a], cfg)
+    editing.direct(plan, [a], cfg, None, "k", None)
+    climax = [e for s in plan.segments for e in s.events if "climax" in e["fx"]]
+    assert climax, "un climax"
+    d = climax[0]["direction"]
+    assert d["class"] == "spectaculaire" and d["tier"] == "fort" and "promu" in d["why"]
+    assert "punch" in climax[0]["fx"]
+    assert not {"notify", "hitmarker_gfx", "headshot_gfx"} & set(climax[0]["fx"])
