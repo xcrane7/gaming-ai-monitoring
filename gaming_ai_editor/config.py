@@ -194,6 +194,10 @@ DEFAULTS: dict[str, Any] = {
     # Emballage YouTube (OUTPUT/reports/<vidéo>.metadata.json) : 3 titres, description,
     # chapitres, hashtags, miniature PNG. game_name vide : déduit du profil de jeu / du fichier.
     "youtube": {"enabled": True, "game_name": ""},
+    # Moteur de motion design : "auto" = Chromium (Playwright) pour les animations complexes
+    # s'il est installé, sinon Pillow ; "pillow" = jamais Chromium. style : "auto" (selon
+    # l'énergie de la vidéo) | competitive | cinematic | aggressive | epic | clean
+    "motion": {"engine": "auto", "style": "auto", "chromium_path": ""},
     "dashboard": {"host": "127.0.0.1", "port": 8765},
 }
 

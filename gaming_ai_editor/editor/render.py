@@ -519,8 +519,16 @@ class Renderer:
                 font=plan.style.get("font") or "Impact",
                 beats=self._montage_beats(plan, total), clips=plan.offsets())
             gfx_path = work / "graphics.mov"
+            mcfg = self.cfg.get("motion") or {}
+            web = None
+            if str(mcfg.get("engine", "auto")) in ("auto", "web") and \
+                    not (plan.style or {}).get("safe_mode"):
+                web = {"style": (plan.style or {}).get("preset") or "aggressive", "cfg": self.cfg}
             gfx_stats = gfx_engine.render_track(plan.graphics, ctx, gfx_path,
-                                                report(stages["clips"], stages["gfx"]))
+                                                report(stages["clips"], stages["gfx"]), web=web)
+            if web is not None:
+                self.log(f"Motion design : moteur {gfx_stats.get('web_engine')}, style "
+                         f"{web['style']}, {gfx_stats.get('web_frames', 0)} images Chromium")
             timings["graphics"] = round(time.time() - t0, 2)
 
         music, music_info = self._music(plan, out_path.stem, work, total)

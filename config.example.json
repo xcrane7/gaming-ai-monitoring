@@ -84,7 +84,9 @@
     "short.layout": "auto = plein écran (recadrage centré, ou qui suit l'action si elle bouge) | track | crop | blur | hybrid (zone 4:5 entre deux bandes floues)",
     "qa.visual": "contrôle visuel des images rendues : images floues, brûlées, ternes ; un refus relance un rendu prudent",
     "style.energy_arc": "son : cold open plein pot, montée qui repart 4 dB plus bas et remonte jusqu'au climax",
-    "qa.blur_check": "flou ajouté par le montage, image par image (expérimental : faux positifs, désactivé)"
+    "qa.blur_check": "flou ajouté par le montage, image par image (expérimental : faux positifs, désactivé)",
+    "motion.engine": "auto = Chromium (pip install -r requirements-motion.txt) pour les animations complexes, sinon Pillow | pillow",
+    "motion.style": "auto | competitive (esport) | cinematic | aggressive | epic | clean"
   },
   "analysis": {
     "rerank": true,
@@ -130,5 +132,10 @@
     "max_burnt_ratio": 0.06,
     "max_blurred_ratio": 0.12,
     "blur_check": false
+  },
+  "motion": {
+    "engine": "auto",
+    "style": "auto",
+    "chromium_path": ""
   }
 }

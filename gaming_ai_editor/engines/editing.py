@@ -124,7 +124,14 @@ def style_dna(analyses: list[dict], cfg, fmt: str, key: str) -> dict:
         spread = float((analyses[0].get("focus") or {}).get("spread", 0.0))
         layout = "track" if spread > 0.07 else "crop"
     look = color.choose_look(prof, seed) if prof else "teal_orange"
+    # direction artistique du motion design (5 styles) : impose aussi la famille de
+    # transitions, l'intensité de la caméra et la fréquence des mots
+    from .web_motion import STYLES, choose_style
+
+    preset = choose_style(cfg, {"energy": energy, "transitions": family})
+    family = STYLES[preset]["transitions"]
     return {
+        "preset": preset,
         "seed": seed, "palette_name": name, "palette": palette, "font": font,
         "look": look if st.get("grade", True) else None, "transitions": family,
         "intensity": intensity, "energy": round(energy, 3), "layout": layout,
@@ -161,6 +168,10 @@ class Director:
         self.texts = texts or {}
         self.dna = style_dna(analyses, cfg, plan.format, key)
         self.rng = random.Random(self.dna["seed"])
+        from .web_motion import STYLES
+
+        self.preset = STYLES.get(self.dna.get("preset", ""), STYLES["aggressive"])
+        self.cam_k = self.preset["camera"]
         self.music_info = music_info
         self.word_pool: dict[str, list[str]] = {}
         self.short = plan.format == "short"
@@ -429,11 +440,11 @@ class Director:
                 t = round(seg.map_time(ev["t"]), 4)
                 f = float(ev["force"])
                 if "punch" in ev["fx"]:
-                    punches.append((t, f))
+                    punches.append((t, f * self.cam_k["punch"]))
                 if "punch_soft" in ev["fx"]:
                     punches.append((t, f * 0.4))
                 if "shake" in ev["fx"]:
-                    shakes.append((t, f))
+                    shakes.append((t, f * self.cam_k["shake"]))
                 if "flash" in ev["fx"] or "climax" in ev["fx"]:
                     flashes.append((t, f))
                 for name, length in (("rgb_split", 0.18), ("glitch", 0.22), ("glow", 0.4),
@@ -593,6 +604,9 @@ class Director:
                     x = float(focus["x"][k])
                 y = 0.45 if vertical else 0.5
                 s = dna["seed"] + int(t * 100)
+                if "climax" in fx and self.preset.get("letterbox"):
+                    g.append({"type": "climax", "start": round(max(0.0, t - 1.0), 3),
+                              "end": round(min(D, t + 1.4), 3)})
                 # cible sur le moment clé : climax, ou kill/headshot confirmé (IA ou OCR)
                 if st.get("focus_ring", True) and ("climax" in fx or ev.get("label") in
                                                    ("kill", "headshot", "clutch")):
@@ -622,7 +636,7 @@ class Director:
                     slots.append(t + 2.0)
                     g.append({"type": "notify", "start": t, "end": t + 2.0, "text": text,
                               "icon": ic, "slot": slot})
-                word_gap = 1.6 if self.short else 3.0
+                word_gap = float(self.preset.get("word_gap", 1.6)) if self.short else 3.0
                 big = "climax" in fx or ev.get("label") in SEMANTIC or ev.get("strength", 0) > 0.6
                 if t - last_word >= word_gap and (self.short or big) and i not in worded \
                         and not (hook_until and t < hook_until) \

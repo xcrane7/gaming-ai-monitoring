@@ -26,6 +26,13 @@ if errorlevel 1 (
   echo.
 )
 
+echo Installation du moteur de motion design (Chromium, facultatif, ~150 Mo)...
+".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements-motion.txt
+if not errorlevel 1 ".venv\Scripts\python.exe" -m playwright install chromium
+if errorlevel 1 (
+  echo [info] Moteur Chromium non installe : animations dessinees par Pillow.
+)
+
 where ffmpeg >nul 2>nul
 if not errorlevel 1 goto :inspect
 echo.

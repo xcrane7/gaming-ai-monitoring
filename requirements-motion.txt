@@ -1,0 +1,4 @@
+# Moteur de motion design HTML/CSS (facultatif, licence Apache-2.0).
+# Après l'installation : python -m playwright install chromium   (environ 150 Mo, une fois)
+# Sans lui, le logiciel dessine toutes les animations avec Pillow (moins riches).
+playwright>=1.40

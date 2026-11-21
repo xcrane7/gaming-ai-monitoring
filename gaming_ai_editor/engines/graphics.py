@@ -746,6 +746,19 @@ class FocusRing(Element):
         draw.ellipse((x - d, y - d, x + d, y + d), fill=c.color("accent", int(230 * fade)))
 
 
+class Letterbox(Element):
+    """Bandes cinéma du climax (repli Pillow du moteur web)."""
+    layer = 1
+
+    def draw(self, canvas, draw, t):
+        c = self.ctx
+        h = c.height * 0.065
+        k = min(1.0, (t - self.start) / 0.4, max(0.0, (self.end - t) / 0.35))
+        y = ease_out_cubic(max(0.0, k)) * h
+        draw.rectangle((0, 0, c.width, y), fill=(0, 0, 0, 255))
+        draw.rectangle((0, c.height - y, c.width, c.height), fill=(0, 0, 0, 255))
+
+
 @lru_cache(maxsize=16)
 def radial_glow(size: int, color: tuple) -> Image.Image:
     yy, xx = np.mgrid[0:size, 0:size]
@@ -917,7 +930,7 @@ ELEMENTS = {
     "victory": Victory, "title": Title, "lower_third": LowerThird, "scoreboard": Scoreboard,
     "hud": Hud, "progress": Progress, "sparks": Particles, "shockwave": Shockwave,
     "explosion": Explosion, "embers": Embers, "subscribe": Subscribe, "captions": Captions,
-    "focus_ring": FocusRing,
+    "focus_ring": FocusRing, "climax": Letterbox,
 }
 
 
@@ -943,11 +956,33 @@ def render_frame(elements: list[Element], ctx: Context, t: float) -> Image.Image
 
 
 def render_track(timeline: list[dict], ctx: Context, out: Path,
-                 on_progress=None, cancel_check=None) -> dict:
-    """Encode la couche graphique (QuickTime Animation avec alpha) de la durée du montage."""
+                 on_progress=None, cancel_check=None, web: dict | None = None) -> dict:
+    """Encode la couche graphique (QuickTime Animation avec alpha) de la durée du montage.
+
+    `web` = {"style", "cfg"} : les éléments complexes (accroche, mots, cible, bannières,
+    combo, victoire, bandes cinéma) sont rendus par Chromium (engines/web_motion.py) et
+    fusionnés image par image avec la couche Pillow. Sans Chromium : tout en Pillow.
+    """
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    elements = build(timeline, ctx)
+    engine, web_note = None, "désactivé"
+    if web is not None:
+        from . import web_motion
+
+        try:
+            engine = web_motion.open_engine(timeline, ctx.width, ctx.height, ctx.palette,
+                                            web.get("style", "aggressive"), web.get("cfg"))
+            web_note = "chromium" if engine else (
+                "Playwright absent" if not web_motion.available() else "aucun élément")
+        except Exception as exc:  # repli : Pillow dessine tout, le rendu continue
+            engine, web_note = None, f"repli Pillow ({type(exc).__name__}: {str(exc)[:120]})"
+    if engine is not None:
+        from .web_motion import WEB_TYPES
+
+        timeline_pillow = [i for i in timeline if i.get("type") not in WEB_TYPES]
+    else:
+        timeline_pillow = timeline
+    elements = build(timeline_pillow, ctx)
     frames = int(round(ctx.duration * ctx.fps))
     cmd = [ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{ctx.width}x{ctx.height}",
@@ -962,6 +997,13 @@ def render_track(timeline: list[dict], ctx: Context, out: Path,
         for i in range(frames):
             t = i / ctx.fps
             img = render_frame(elements, ctx, t)
+            if engine is not None:
+                top = engine.frame(t)
+                if top is not None:
+                    if img is None:
+                        img = top
+                    else:
+                        img.alpha_composite(top)
             if img is None:
                 proc.stdin.write(blank)
             else:
@@ -978,10 +1020,15 @@ def render_track(timeline: list[dict], ctx: Context, out: Path,
         proc.kill()
         proc.wait()
         raise
+    finally:
+        if engine is not None:
+            engine.close()
     if proc.returncode != 0:
         raise RuntimeError(f"encodage de la couche graphique : {err[-400:]}")
     counts: dict[str, int] = {}
     for item in timeline:
         counts[item["type"]] = counts.get(item["type"], 0) + 1
     return {"frames": frames, "frames_with_graphics": drawn, "elements": counts,
-            "seconds": round(time.time() - started, 2)}
+            "seconds": round(time.time() - started, 2), "web_engine": web_note,
+            "web_frames": engine.frames if engine is not None else 0,
+            "web_style": (web or {}).get("style")}
