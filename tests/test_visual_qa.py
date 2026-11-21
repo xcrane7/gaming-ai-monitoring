@@ -32,5 +32,19 @@ def test_blurred_windows_are_refused_and_located(tmp_path):
     assert 0.18 <= exp["blurred"] <= 0.32
     assert all(3.9 <= t <= 6.6 for t in exp["blur_times"]), exp["blur_times"]
     checks = {c["name"]: c for c in run_visual_qa(v, {}, DEFAULTS["qa"])}
-    assert checks["images floues (effets, traînées)"]["status"] == "fail"
-    assert "vers 4" in checks["images floues (effets, traînées)"]["detail"]
+    assert checks["images floues ajoutées (effets, traînées)"]["status"] == "fail"
+    assert "vers 4" in checks["images floues ajoutées (effets, traînées)"]["detail"]
+
+
+def test_game_motion_blur_is_not_blamed_on_the_edit(tmp_path):
+    """Le jeu lui-même est flou par moments (rotations rapides) : un montage qui reprend ces
+    passages tels quels ne doit pas être refusé. Seul le flou ajouté compte."""
+    src = _clip(tmp_path / "jeu.mp4", "gblur=sigma=8:enable='between(t,4,6.5)'")
+    plan = {"width": 360, "height": 640,
+            "segments": [{"source": str(src), "start": 0.0, "end": 10.0}]}
+    checks = {c["name"]: c for c in run_visual_qa(src, plan, DEFAULTS["qa"])}
+    assert checks["images floues ajoutées (effets, traînées)"]["status"] == "pass"
+    # le même montage avec un flou EN PLUS du jeu est refusé
+    worse = _clip(tmp_path / "pire.mp4", "gblur=sigma=8:enable='between(t,4,6.5)+between(t,0.5,3)'")
+    checks = {c["name"]: c for c in run_visual_qa(worse, plan, DEFAULTS["qa"])}
+    assert checks["images floues ajoutées (effets, traînées)"]["status"] == "fail"

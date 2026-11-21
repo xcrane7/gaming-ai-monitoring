@@ -1,7 +1,8 @@
 """Contrôle qualité visuel : juge les images réellement rendues, pas le plan.
 
-- images floues : images bien moins nettes que la netteté habituelle de la vidéo
-  (traînées, mises au point, transitions). La comparaison directe avec la source a été
+- images floues ajoutées : images bien moins nettes que la netteté habituelle de la vidéo
+  (traînées, mises au point, transitions), moins la part déjà floue dans les mêmes
+  passages du jeu (flou de mouvement des rotations rapides : 30 % sur le gameplay FPS). La comparaison directe avec la source a été
   essayée puis abandonnée : le rendu ajoute des détails fins (particules, accentuation,
   compression) qui le font paraître « plus net » que le jeu même quand il est flouté ;
 - images brûlées : part des images où plus de 35 % des pixels sont blancs (flash trop
@@ -61,6 +62,33 @@ def exposure(render: str | Path, fps: float = 2.0) -> dict:
             "blurred": round(float(soft.mean()), 3), "blur_times": times[:12]}
 
 
+def source_blur(plan: dict, fps: float = 2.0) -> float | None:
+    """Part d'images floues dans les mêmes passages de la source, sans aucun effet. Les jeux
+    ont leur propre flou de mouvement (rotations rapides) : seul le flou AJOUTÉ par le
+    montage est un défaut. None si les sources sont introuvables."""
+    segs = plan.get("segments") or []
+    vertical = int(plan.get("height", 0)) > int(plan.get("width", 1))
+    w, h = (180, 320) if vertical else (320, 180)
+    frames = []
+    for seg in segs:
+        src = Path(seg.get("source", ""))
+        if not src.is_file():
+            return None
+        crop = "crop='min(iw,ih*9/16)':ih," if vertical else ""
+        cmd = [ffmpeg_bin(), "-v", "error", "-ss", f"{seg['start']:.3f}", "-t",
+               f"{max(0.1, seg['end'] - seg['start']):.3f}", "-i", str(src), "-vf",
+               f"fps={fps},{crop}scale={w}:{h}:flags=area,format=gray", "-f", "rawvideo", "-"]
+        out = subprocess.run(cmd, capture_output=True, timeout=600, **_popen_kwargs()).stdout
+        arr = np.frombuffer(out, np.uint8)
+        n = arr.size // (w * h)
+        frames += list(arr[: n * w * h].reshape(n, h, w).astype(np.float32))
+    if not frames:
+        return None
+    sharp = np.array([_sharpness(f) for f in frames])
+    ref = float(np.median(sharp))
+    return round(float(np.mean(sharp < 0.35 * ref)), 3) if ref > 0 else 0.0
+
+
 def run_visual_qa(render: str | Path, plan: dict, qa_cfg: dict) -> list[dict]:
     checks = []
     exp = exposure(render)
@@ -72,13 +100,17 @@ def run_visual_qa(render: str | Path, plan: dict, qa_cfg: dict) -> list[dict]:
                    "detail": f"{exp['burnt'] * 100:.1f} % des images (max "
                              f"{burnt_max * 100:.0f} %)", "value": exp["burnt"]})
     blur_max = float(qa_cfg.get("max_blurred_ratio", 0.12))
-    status = FAIL if exp["blurred"] > blur_max else WARN if exp["blurred"] > blur_max / 2 \
-        else PASS
+    base = source_blur(plan) if plan.get("segments") else None
+    added = exp["blurred"] - (base or 0.0)
+    status = FAIL if added > blur_max else WARN if added > blur_max / 2 else PASS
     where = f", vers {', '.join(f'{t:g} s' for t in exp['blur_times'][:6])}" \
-        if exp["blur_times"] else ""
-    checks.append({"name": "images floues (effets, traînées)", "status": status,
-                   "detail": f"{exp['blurred'] * 100:.1f} % des images (max "
-                             f"{blur_max * 100:.0f} %){where}", "value": exp["blurred"]})
+        if exp["blur_times"] and status != PASS else ""
+    ref = (f" ; mêmes passages dans le jeu : {base * 100:.1f} % (flou de mouvement du jeu)"
+           if base is not None else "")
+    checks.append({"name": "images floues ajoutées (effets, traînées)", "status": status,
+                   "detail": f"{exp['blurred'] * 100:.1f} % des images{ref} ; ajouté par le "
+                             f"montage : {max(0.0, added) * 100:.1f} % (max "
+                             f"{blur_max * 100:.0f} %){where}", "value": round(added, 3)})
     flat_max = float(qa_cfg.get("max_flat_ratio", 0.15))
     checks.append({"name": "images ternes (sans contraste)",
                    "status": WARN if exp["flat"] > flat_max else PASS,
