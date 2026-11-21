@@ -27,7 +27,8 @@ from pathlib import Path
 from PIL import Image
 
 # éléments rendus par Chromium ; les autres restent dans Pillow
-WEB_TYPES = {"hook", "word", "focus_ring", "notify", "headshot", "combo", "victory", "climax"}
+WEB_TYPES = {"hook", "word", "focus_ring", "notify", "headshot", "combo", "victory", "climax",
+             "hitmarker"}
 
 # Cinq directions artistiques. Polices : celles de Windows d'abord, puis Linux.
 STYLES = {
@@ -345,7 +346,23 @@ function climax(it) {
     leave(bar, [{transform: 'translateY(0)'}, {transform: `translateY(${top ? -h - 8 : h + 8}px)`}], it.end - 0.35, 0.35); }
 }
 
-const BUILD = {hook, word, focus_ring: focusRing, notify, headshot, combo, victory, climax};
+// ---- hit marker (kill confirmé) : quatre traits qui claquent autour du viseur ----------------
+function hitmarker(it) {
+  const size = 150 * U, x = (it.x ?? 0.5) * W, y = (it.y ?? 0.45) * H;
+  const box = el('div', `position:absolute;left:${x - size / 2}px;top:${y - size / 2}px;width:${size}px;height:${size}px`);
+  const s = svg('svg', {width: size, height: size, viewBox: '0 0 100 100'}, box);
+  const strokes = [];
+  for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const g = svg('g', {}, s);
+    const d = `M ${50 + sx * 12} ${50 + sy * 12} L ${50 + sx * 34} ${50 + sy * 34}`;
+    svg('path', {d, stroke: 'rgba(0,0,0,.6)', 'stroke-width': 13, 'stroke-linecap': 'round'}, g);
+    svg('path', {d, stroke: '#ffffff', 'stroke-width': 7, 'stroke-linecap': 'round'}, g);
+    enter(g, [{transform: `translate(${-sx * 10}px,${-sy * 10}px)`}, {transform: 'translate(0,0)'}], it.start, 0.09, 'cubic-bezier(.2,1.8,.4,1)'); }
+  enter(box, [{transform: 'scale(1.5)', opacity: 0}, {transform: 'scale(1)', opacity: 1}], it.start, 0.08, 'cubic-bezier(.2,1.4,.4,1)');
+  leave(box, [{opacity: 1, transform: 'scale(1)'}, {opacity: 0, transform: 'scale(.85)'}], it.end - 0.2, 0.2);
+}
+
+const BUILD = {hook, word, focus_ring: focusRing, notify, headshot, combo, victory, climax, hitmarker};
 window.build = async () => {
   await document.fonts.ready;
   for (const it of D.items) {

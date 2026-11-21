@@ -148,6 +148,7 @@ def test_every_graphic_element_renders(tmp_path):
         {"type": "explosion", "start": 1.2, "x": 0.5, "y": 0.5},
         {"type": "focus_ring", "start": 1.0, "x": 0.5, "y": 0.45},
         {"type": "climax", "start": 0.2, "end": 2.8},
+        {"type": "hitmarker", "start": 1.0, "end": 1.45, "x": 0.5, "y": 0.45},
         {"type": "captions", "start": 0.2, "end": 2.6,
          "words": [{"t0": 0.2, "t1": 0.9, "w": "Regarde", "line": 0},
                    {"t0": 0.9, "t1": 2.6, "w": "ça", "line": 0}]},

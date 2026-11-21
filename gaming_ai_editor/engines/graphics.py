@@ -746,6 +746,22 @@ class FocusRing(Element):
         draw.ellipse((x - d, y - d, x + d, y + d), fill=c.color("accent", int(230 * fade)))
 
 
+class HitMarker(Element):
+    """Hit marker d'un kill confirmé (repli Pillow) : quatre traits autour du viseur."""
+    layer = 6
+
+    def draw(self, canvas, draw, t):
+        c = self.ctx
+        p = (t - self.start) / max(0.05, self.end - self.start)
+        a = int(255 * (1.0 if p < 0.6 else max(0.0, (1 - p) / 0.4)))
+        x, y = self.item.get("x", 0.5) * c.width, self.item.get("y", 0.45) * c.height
+        k = 75 * c.s * (1 + 0.25 * max(0.0, 1 - (t - self.start) / 0.09))
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            pts = [(x + sx * k * 0.35, y + sy * k * 0.35), (x + sx * k, y + sy * k)]
+            draw.line(pts, fill=(0, 0, 0, int(a * 0.6)), width=max(3, int(13 * c.s)))
+            draw.line(pts, fill=(255, 255, 255, a), width=max(2, int(7 * c.s)))
+
+
 class Letterbox(Element):
     """Bandes cinéma du climax (repli Pillow du moteur web)."""
     layer = 1
@@ -930,7 +946,7 @@ ELEMENTS = {
     "victory": Victory, "title": Title, "lower_third": LowerThird, "scoreboard": Scoreboard,
     "hud": Hud, "progress": Progress, "sparks": Particles, "shockwave": Shockwave,
     "explosion": Explosion, "embers": Embers, "subscribe": Subscribe, "captions": Captions,
-    "focus_ring": FocusRing, "climax": Letterbox,
+    "focus_ring": FocusRing, "climax": Letterbox, "hitmarker": HitMarker,
 }
 
 

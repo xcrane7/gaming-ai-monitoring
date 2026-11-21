@@ -23,7 +23,7 @@ import hashlib
 import math
 import random
 
-from . import color
+from . import color, direction
 from .graphics import available_fonts
 from .motion import tracking_x
 
@@ -77,6 +77,8 @@ HOOK_TEMPLATES = {
     "surprise": ["Personne ne l'a vu venir", "D'un coup…", "Écoute bien"],
     "réaction": ["Sa réaction…", "Il ne s'y attendait pas", "Écoute bien"],
 }
+HOOK_TEMPLATES["explosion"] = ["Tout a sauté d'un coup", "Attends l'explosion", "Ça finit en fumée"]
+CLASS_HOOK = {"drole": "drôle", "multikill": "série", "tension": "surprise", "reaction": "réaction"}
 EVENT_PRIORITY = {"victory": 0, "headshot": 1, "notify": 2, "combo": 3, "word": 4}
 SEMANTIC = {"kill", "headshot", "clutch", "victoire", "fail", "drôle"}
 
@@ -148,6 +150,15 @@ def style_dna(analyses: list[dict], cfg, fmt: str, key: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _semantic_peak(analysis: dict, t: float) -> float | None:
+    """Pic du moment étiqueté (IA/OCR) qui couvre t : une étiquette = UN événement."""
+    for h in analysis.get("highlights", []):
+        if h.get("source") in ("gemini", "claude", "ocr") and h["start"] - 1.0 <= t <= h["end"] + 1.0 \
+                and str(h.get("label", "")) in SEMANTIC:
+            return float(h.get("peak", t))
+    return None
+
+
 def _semantic_label(analysis: dict, t: float) -> str | None:
     """Étiquette fiable d'un moment proche : IA (Gemini, Claude) ou texte lu à l'écran (OCR)."""
     for h in analysis.get("highlights", []):
@@ -184,6 +195,16 @@ class Director:
             self.word_pool[kind] = pool
         return pool.pop()
 
+    def _class_word(self, cls: str | None) -> str:
+        """Texte d'impact de la classe décidée, sans répétition dans la vidéo ; vide si la
+        classe n'appelle pas de texte (réaction, déplacement, temps mort)."""
+        pool = self.word_pool.get(("cls", cls))
+        if pool is None:
+            pool = list(direction.TEXTS.get(cls or "", []))
+            self.rng.shuffle(pool)
+            self.word_pool[("cls", cls)] = pool
+        return pool.pop() if pool else ""
+
     # -- 1. événements et effets de chaque clip ----------------------------------
     def choose_events(self) -> None:
         k = self.dna["intensity"]
@@ -211,45 +232,42 @@ class Director:
                 # son ne l'a marqué : l'étiquette va à l'événement le plus proche du pic
                 min(chosen, key=lambda c: abs(c["t"] - seg.peak))["label"] = peak_label
             chosen.sort(key=lambda e: e["t"])
+            # une étiquette de l'IA décrit UN moment : elle ne va qu'à l'événement le plus proche
+            # de son pic (sinon un seul kill reconnu devenait un « multi-kill » inventé)
+            owners: dict[float, dict] = {}
+            for c in chosen:
+                if c.get("label"):
+                    pk = _semantic_peak(a, c["t"])
+                    if pk is None:
+                        continue
+                    best = owners.get(pk)
+                    if best is None or abs(c["t"] - pk) < abs(best["t"] - pk):
+                        owners[pk] = c
+            for c in chosen:
+                if c.get("label") and _semantic_peak(a, c["t"]) is not None \
+                        and owners.get(_semantic_peak(a, c["t"])) is not c:
+                    c["label"] = None
+            # directeur artistique : classe (avec preuve), importance, intensité, recette
+            kills = [c["t"] for c in chosen if c.get("label") == "kill"]
             last_heavy = -10.0
+            kept = []
             for ev in chosen:
-                kind, force = ev["kind"], float(ev.get("strength", 0.5))
+                force = float(ev.get("strength", 0.5))
                 heavy_ok = ev["t"] - last_heavy >= 1.5
-                fx: list[str] = []
-                if kind == "explosion":
-                    fx += ["punch", "flash", "explosion_gfx", "sfx_boom"]
-                    if heavy_ok:
-                        fx += ["shake", "glow"] + (["distortion"] if force > 0.6 else [])
-                elif kind in ("impact", "shot"):
-                    fx += ["punch", "flash", "sparks_gfx", "sfx_impact"]
-                    if heavy_ok and self.rng.random() < 0.6:
-                        fx += ["rgb_split"]
-                    if heavy_ok and force > 0.7:
-                        fx += ["shake"]
-                elif kind == "burst":
-                    fx += ["combo", "glitch", "sfx_glitch"]
-                elif kind == "flash":
-                    # le jeu flashe déjà : un halo en plus surexpose l'image
-                    fx += ["punch_soft", "sfx_impact"]
-                elif kind == "rush":
-                    fx += ["motion_blur", "sfx_whoosh"]
-                elif kind == "surprise":  # silence puis pic : on sursaute avec le joueur
-                    fx += ["punch", "flash", "sfx_impact"] + (["shake"] if heavy_ok else [])
-                elif kind == "reaction":  # le joueur réagit : on souligne sans écraser sa voix
-                    fx += ["punch_soft"]
-                if {"shake", "glitch", "distortion"} & set(fx):
+                peak_near = bool(seg.peak) and abs(ev["t"] - seg.peak) < 1.0
+                near = sum(1 for t in kills if t != ev["t"] and abs(t - ev["t"]) <= 4.0)
+                d = direction.decide(ev, seg.role, peak_near, near, heavy_ok,
+                                     scale=float(self.dna["intensity"]))
+                if d["tier"] == "aucun":  # moment faible : aucun effet
+                    continue
+                if direction.HEAVY & set(d["fx"]):
                     last_heavy = ev["t"]
-                label = ev.get("label")
-                if label in ("kill", "headshot", "clutch"):
-                    fx += ["notify", "sfx_ding"] + (["headshot_gfx"] if label == "headshot" else [])
-                elif label == "victoire":
-                    fx += ["victory_gfx"]
-                elif label == "fail":
-                    fx += ["glitch", "sfx_glitch"]
-                # pas de notification générique (« Explosion », « Impact ») : elle doublonne
-                # le mot d'impact ; la carte façon kill feed est réservée aux vraies étiquettes
-                ev["fx"] = fx
+                ev["direction"] = {k: d[k] for k in ("class", "evidence", "importance", "tier",
+                                                     "why")}
+                ev["fx"] = list(d["fx"])
                 ev["force"] = round(min(1.0, 0.5 + 0.6 * force) * k, 3)
+                kept.append(ev)
+            chosen = kept
             seg.events = chosen
 
     # -- 2. moment fort : ralenti -------------------------------------------------
@@ -367,9 +385,11 @@ class Director:
             segments = [s for s in segments if s.role == "climax"]
         for seg in segments:
             for ev in seg.events:
-                if ev["kind"] in ("explosion", "impact", "shot", "surprise") and \
-                        ev["t"] - seg.start >= 1.2 and seg.end - ev["t"] >= 1.2:
-                    cands.append((ev.get("strength", 0) + (0.5 if ev.get("label") else 0), seg, ev))
+                imp = float((ev.get("direction") or {}).get("importance", ev.get("strength", 0)))
+                strong = ev["kind"] in ("explosion", "impact", "shot", "surprise") or \
+                    "prefer_ramp" in ev["fx"]
+                if strong and ev["t"] - seg.start >= 1.2 and seg.end - ev["t"] >= 1.2:
+                    cands.append((imp + (1.0 if "prefer_ramp" in ev["fx"] else 0.0), seg, ev))
         cands.sort(key=lambda c: c[0], reverse=True)
         used = set()
         for _, seg, ev in cands:
@@ -443,6 +463,12 @@ class Director:
                     punches.append((t, f * self.cam_k["punch"]))
                 if "punch_soft" in ev["fx"]:
                     punches.append((t, f * 0.4))
+                if "punch_snap" in ev["fx"]:  # headshot : zoom sec et fort
+                    punches.append((t, min(1.3, f * 1.5)))
+                if "punch_comic" in ev["fx"]:  # moment drôle : zoom marqué, sans tremblement
+                    punches.append((t, f * 0.9))
+                if "shake_micro" in ev["fx"]:  # kill : micro-tremblement
+                    shakes.append((t, f * 0.35 * self.cam_k["shake"]))
                 if "shake" in ev["fx"]:
                     shakes.append((t, f * self.cam_k["shake"]))
                 if "flash" in ev["fx"] or "climax" in ev["fx"]:
@@ -613,6 +639,17 @@ class Director:
                     g.append({"type": "focus_ring", "start": t, "x": x,
                               "y": y - (0.06 if vertical else 0.0), "life": 0.9,
                               "radius": 0.12 if vertical else 0.08})
+                if "hitmarker_gfx" in fx:
+                    g.append({"type": "hitmarker", "start": t, "end": round(t + 0.45, 3),
+                              "x": x, "y": 0.45 if vertical else 0.5})
+                if "letterbox" in fx and not any(i["type"] == "climax" and i["start"] <= t <= i["end"]
+                                                 for i in g):
+                    g.append({"type": "climax", "start": round(max(0.0, t - 0.6), 3),
+                              "end": round(min(D, t + 2.0), 3)})
+                if "sfx_riser" in fx and "climax" not in fx:
+                    cues.append({"t": round(max(0.0, t - 1.2), 3), "kind": "riser", "gain": 0.6})
+                if "sfx_pop" in fx:
+                    cues.append({"t": t, "kind": "click", "gain": 0.7})
                 if "explosion_gfx" in fx:
                     g.append({"type": "explosion", "start": t, "x": x, "y": y, "seed": s})
                 if "sparks_gfx" in fx:
@@ -642,15 +679,20 @@ class Director:
                         and not (hook_until and t < hook_until) \
                         and "headshot_gfx" not in fx and "victory_gfx" not in fx:
                     worded.add(i)  # une légende d'événement par clip au maximum
-                    text = captions.pop(0) if captions else self._word(ev.get("label") or ev["kind"])
-                    style = "slam" if "climax" in fx or ev["kind"] == "explosion" else \
-                        self.rng.choice(["pop", "pop", "slide"])
-                    g.append({"type": "word", "start": t, "end": t + (1.4 if "climax" in fx else 1.0),
-                              "text": str(text).upper()[:22], "style": style,
-                              "pos": [0.47, 0.56] if vertical else [0.5, 0.7],
-                              "angle": dna["word_angle"] * (1 if len(g) % 2 else -1),
-                              "size": 150 if "climax" in fx else 120})
-                    last_word = t
+                    cls = (ev.get("direction") or {}).get("class")
+                    text = captions.pop(0) if captions else self._class_word(cls)
+                    if not text:  # la classe n'appelle pas de texte : le clip reste libre
+                        worded.discard(i)
+                    else:
+                        style = "slam" if "climax" in fx or ev["kind"] == "explosion" else \
+                            self.rng.choice(["pop", "pop", "slide"])
+                        g.append({"type": "word", "start": t,
+                                  "end": t + (1.4 if "climax" in fx else 1.0),
+                                  "text": str(text).upper()[:22], "style": style,
+                                  "pos": [0.47, 0.56] if vertical else [0.5, 0.7],
+                                  "angle": dna["word_angle"] * (1 if len(g) % 2 else -1),
+                                  "size": 150 if "climax" in fx else 120})
+                        last_word = t
                 # sound design
                 if "sfx_boom" in fx:
                     cues.append({"t": t, "kind": "boom", "gain": 0.9})
@@ -678,12 +720,20 @@ class Director:
             return ""
         if setting not in ("auto", "", None):
             return str(setting)[:48]
-        if self.texts.get("hook"):
-            return str(self.texts["hook"])[:48]
+        proven = {(e.get("direction") or {}).get("class") for s in self.plan.segments
+                  for e in s.events}
+        if self.texts.get("hook"):  # texte de Claude : vérifié, sinon repli local
+            hook, why = direction.check_hook(self.texts["hook"], proven)
+            if hook:
+                return hook
+            self.plan.notes.append(f"Accroche de l'IA refusée ({why}) : modèle local.")
         best = max(self.plan.segments, key=lambda sg: sg.score)
-        labels = [e.get("label") for e in best.events if e.get("label")] + [best.label or ""]
-        for label in labels:
-            key = "série" if label.startswith("série") else label
+        # modèle local selon la classe décidée du meilleur moment (la plus importante)
+        decided = sorted((e["direction"] for e in best.events if e.get("direction")),
+                         key=lambda d: -d["importance"])
+        keys = [CLASS_HOOK.get(d["class"], d["class"]) for d in decided]
+        keys += ["série" if (best.label or "").startswith("série") else (best.label or "")]
+        for key in keys:
             if key in HOOK_TEMPLATES:
                 return self.rng.choice(HOOK_TEMPLATES[key])
         return self.rng.choice(HOOKS)
@@ -742,12 +792,26 @@ class Director:
                 m["drop_at"] = drop
                 break
 
+    def direction_notes(self) -> None:
+        """Résumé lisible des décisions du directeur (rapport, dashboard)."""
+        counts: dict[str, list[str]] = {}
+        for seg in self.plan.segments:
+            for ev in seg.events:
+                d = ev.get("direction") or {}
+                if d:
+                    counts.setdefault(d["class"], []).append(d["tier"])
+        if counts:
+            parts = [f"{len(v)} {c} ({', '.join(sorted(set(v)))})" for c, v in
+                     sorted(counts.items(), key=lambda kv: -direction.BASE.get(kv[0], 0))]
+            self.plan.notes.append("Direction : " + " ; ".join(parts))
+
     def run(self) -> None:
         plan = self.plan
         plan.style = self.dna
         if not self.cfg["style"]["enabled"] or not plan.segments:
             return
         self.choose_events()
+        self.direction_notes()
         self.drop_dead_clips()
         self.choose_ramps()
         self.speed_up_dead_time()
