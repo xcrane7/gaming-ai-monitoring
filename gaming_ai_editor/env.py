@@ -90,7 +90,7 @@ def inspect(cfg=None) -> dict:
         "render_encoder": "nvenc" if encoders.get("h264_nvenc") else
                           "cpu" if encoders.get("libx264") else None,
         "modules": {name: _module_version(name)
-                    for name in ("numpy", "cv2", "PIL", "rapidocr", "faster_whisper")},
+                    for name in ("numpy", "cv2", "PIL", "rapidocr", "playwright", "faster_whisper")},
         "cli": {name: shutil.which(name) for name in ("gemini", "claude")},
         "gemini_api_key": bool(cfg and _gemini_key(cfg)),
         "disk_free_gb": round(shutil.disk_usage(root).free / 1024 ** 3, 1),
@@ -111,6 +111,10 @@ def inspect(cfg=None) -> dict:
     if ffmpeg_version and not encoders.get("h264_nvenc"):
         notes.append("NVENC inutilisable (pas de GPU NVIDIA détecté par FFmpeg, ou pilote trop "
                      "ancien) : rendu sur CPU.")
+    if not report["modules"]["playwright"]:
+        notes.append("Playwright absent : animations dessinées par Pillow (moins riches). "
+                     "Moteur Chromium : pip install -r requirements-motion.txt puis "
+                     "python -m playwright install chromium")
     if not report["modules"]["rapidocr"]:
         notes.append("RapidOCR absent : pas de lecture du texte à l'écran (kill feed, "
                      "VICTORY). Facultatif : pip install -r requirements-ocr.txt")

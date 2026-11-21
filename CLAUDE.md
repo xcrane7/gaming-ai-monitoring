@@ -33,6 +33,10 @@ et les kills confirmés, plus d'image blanche pendant l'accroche. QA visuelle
 ajouté par le montage (expérimental, désactivé : faux positifs sur le gameplay réel et
 les vidéos de test), images ternes.
 
+Moteur de motion design hybride (`engines/web_motion.py`) : Chromium/Playwright pour les
+animations complexes (masques, tracking, Bézier, SVG, flou de mouvement, RVB), Pillow pour
+le reste, repli Pillow complet ; 5 styles (`motion.style`). Tests : `tests/test_web_motion.py`.
+
 Pistes restantes (non faites) : profils de jeux réels (zones et mots-clés), piste micro séparée,
 rires ; vérifier sur de vrais gameplays de l'utilisateur (un seul gameplay réel testé, sans voix
 ni texte de jeu : l'OCR et les réactions ne sont validés que sur vidéos de test).

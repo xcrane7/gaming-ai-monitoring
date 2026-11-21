@@ -84,6 +84,27 @@ Sans Gemini, le logiciel ne prétend jamais qu'un événement est un kill : la
 notification dit « Explosion » ou « Impact ». Ce sont les seules étiquettes que
 le son et l'image permettent d'affirmer.
 
+### Moteur de motion design hybride (engines/web_motion.py)
+- **Chromium** (Playwright, facultatif) : accroche, mots d'impact, cible, bannières de kill,
+  headshot, compteur de série, victoire, bandes cinéma. Une page HTML par rendu ; chaque
+  animation est une Web Animation mise en pause et placée à l'instant t (`seek`), puis
+  capturée avec fond transparent : rendu déterministe, image par image, jamais en temps réel.
+- **Pillow** : sous-titres mot à mot, particules, explosions, barre de progression, braises.
+- Fusion image par image dans la même piste transparente (qtrle) : le compositing FFmpeg,
+  le recadrage, l'audio et les sous-titres ne changent pas.
+- Chromium est lancé une fois par processus (≈1 s) et réutilisé ; seules les images où un
+  élément complexe est visible sont capturées. Sans Playwright/Chromium, ou en cas
+  d'erreur : tout repasse par Pillow. Le second essai « prudent » n'a aucun graphisme.
+- Cinq styles (`motion.style`) : competitive, cinematic, aggressive, epic, clean. Chacun fixe
+  police, graisse, casse, tracking, courbes de Bézier, durées, entrée des mots, séparation
+  RVB, halo, dégradé, taille de la cible, bandes cinéma, intensité caméra (punch/shake),
+  famille de transitions et écart entre mots. « auto » choisit selon l'énergie de la vidéo.
+- Déclenchement : uniquement sur les événements retenus par le directeur (kill/headshot/
+  victoire seulement avec preuve IA ou OCR ; série = coups audio comptés, affichée
+  « SÉRIE », jamais « KILL »). Moment calme : rien.
+- GPU : la capture passe par le rendu logiciel de Chromium (pas d'accélération GPU
+  revendiquée) ; NVENC reste utilisé pour l'encodage final quand il est disponible.
+
 ### Contrôle qualité visuel (qa/visual.py)
 Mesuré sur les images rendues, pas sur le plan : images brûlées (2 images/s sur toute la
 vidéo, 15 images/s sur les 3 premières secondes : une seule image blanche dans l'accroche

@@ -20,6 +20,10 @@ payante. Les vidéos originales ne sont jamais modifiées, déplacées ni suppri
    `OUTPUT\reports\<vidéo>.metadata.json` : 3 titres, description prête à coller avec les
    chapitres et les hashtags, et une miniature PNG 1280×720 (visible dans le dashboard).
 
+Optionnel : le moteur de motion design Chromium (animations plus riches) est installé par
+`install.bat` ; sinon `pip install -r requirements-motion.txt` puis
+`python -m playwright install chromium`. Sans lui, Pillow dessine tout.
+
 Optionnel :
 
 | Script | Effet |
