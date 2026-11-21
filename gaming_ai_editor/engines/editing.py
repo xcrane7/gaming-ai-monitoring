@@ -375,6 +375,10 @@ class Director:
                 t += w
             if best:
                 seg.ramp = [round(best[0], 4), round(best[1], 4), factor]
+                # jamais sous la durée minimale du format (vu : 299,3 s pour 300 s en format
+                # long quand le directeur a laissé plus de temps morts sans effet)
+                if self.plan.min_seconds and self.plan.duration < self.plan.min_seconds + 0.5:
+                    seg.ramp = []
 
     def choose_ramps(self) -> None:
         st = self.cfg["style"]
