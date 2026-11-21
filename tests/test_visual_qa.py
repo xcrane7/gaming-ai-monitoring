@@ -48,3 +48,15 @@ def test_game_motion_blur_is_not_blamed_on_the_edit(tmp_path):
     worse = _clip(tmp_path / "pire.mp4", "gblur=sigma=8:enable='between(t,4,6.5)+between(t,0.5,3)'")
     checks = {c["name"]: c for c in run_visual_qa(worse, plan, DEFAULTS["qa"])}
     assert checks["images floues ajoutées (effets, traînées)"]["status"] == "fail"
+
+
+def test_a_single_white_frame_in_the_hook_is_refused(tmp_path):
+    """Une seule image blanche (fondu au blanc) pendant les 3 premières secondes : refus,
+    même si elle pèse moins de 6 % de la vidéo (cas vu sur le rendu réel à 1,5 s)."""
+    v = _clip(tmp_path / "accroche.mp4", "eq=brightness=0.9:enable='between(t,1.4,1.6)'")
+    c = {x["name"]: x for x in run_visual_qa(v, {}, DEFAULTS["qa"])}
+    assert c["images brûlées (flash, surexposition)"]["status"] == "fail"
+    assert "accroche à 1.4" in c["images brûlées (flash, surexposition)"]["detail"]
+    late = _clip(tmp_path / "tard.mp4", "eq=brightness=0.9:enable='between(t,7.4,7.6)'")
+    c = {x["name"]: x for x in run_visual_qa(late, {}, DEFAULTS["qa"])}
+    assert c["images brûlées (flash, surexposition)"]["status"] != "fail"

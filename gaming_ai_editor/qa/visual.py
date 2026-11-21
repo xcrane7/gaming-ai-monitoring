@@ -48,9 +48,12 @@ def exposure(render: str | Path, fps: float = 2.0) -> dict:
     frames = np.frombuffer(out, np.uint8)
     n = frames.size // (w * h)
     if n == 0:
-        return {"frames": 0, "burnt": 0.0, "flat": 0.0, "blurred": 0.0, "blur_times": []}
+        return {"frames": 0, "burnt": 0.0, "flat": 0.0, "blurred": 0.0, "blur_times": [],
+                "burnt_times": []}
     frames = frames[: n * w * h].reshape(n, h, w).astype(np.float32)
-    burnt = float(np.mean((frames >= 240).mean(axis=(1, 2)) > 0.35))
+    white = (frames >= 240).mean(axis=(1, 2)) > 0.35
+    burnt = float(np.mean(white))
+    burnt_times = [round(float(i) / fps, 1) for i in np.flatnonzero(white)]
     flat = float(np.mean(frames.std(axis=(1, 2)) < 8.0))
     # flou : image bien moins nette que la netteté habituelle de CETTE vidéo (traînées,
     # mise au point, transitions trop longues). Relatif à la vidéo : indépendant du jeu.
@@ -59,7 +62,8 @@ def exposure(render: str | Path, fps: float = 2.0) -> dict:
     soft = sharp < 0.35 * ref if ref > 0 else np.zeros(n, bool)
     times = [round(float(i) / fps, 1) for i in np.flatnonzero(soft)]
     return {"frames": int(n), "burnt": round(burnt, 3), "flat": round(flat, 3),
-            "blurred": round(float(soft.mean()), 3), "blur_times": times[:12]}
+            "blurred": round(float(soft.mean()), 3), "blur_times": times[:12],
+            "burnt_times": burnt_times[:12]}
 
 
 def source_blur(plan: dict, fps: float = 2.0) -> float | None:
@@ -89,6 +93,21 @@ def source_blur(plan: dict, fps: float = 2.0) -> float | None:
     return round(float(np.mean(sharp < 0.35 * ref)), 3) if ref > 0 else 0.0
 
 
+def hook_white_times(render: str | Path, seconds: float = 3.0, fps: float = 15.0) -> list[float]:
+    """Images blanches pendant l'accroche, à 15 images/s : un fondu au blanc ne dure que
+    quelques images et passerait entre deux échantillons à 2 images/s."""
+    w, h = 72, 128
+    cmd = [ffmpeg_bin(), "-v", "error", "-t", f"{seconds:g}", "-i", str(render), "-vf",
+           f"fps={fps:g},scale={w}:{h}:flags=area,format=gray", "-f", "rawvideo", "-"]
+    out = subprocess.run(cmd, capture_output=True, timeout=300, **_popen_kwargs()).stdout
+    n = len(out) // (w * h)
+    if n == 0:
+        return []
+    frames = np.frombuffer(out, np.uint8)[: n * w * h].reshape(n, w * h)
+    white = (frames >= 240).mean(axis=1) > 0.35
+    return [round(float(i) / fps, 2) for i in np.flatnonzero(white)]
+
+
 def run_visual_qa(render: str | Path, plan: dict, qa_cfg: dict) -> list[dict]:
     checks = []
     exp = exposure(render)
@@ -96,9 +115,14 @@ def run_visual_qa(render: str | Path, plan: dict, qa_cfg: dict) -> list[dict]:
         return checks
     burnt_max = float(qa_cfg.get("max_burnt_ratio", 0.06))
     status = FAIL if exp["burnt"] > burnt_max else WARN if exp["burnt"] > burnt_max / 2 else PASS
+    hook = hook_white_times(render)
+    if hook:  # une image blanche pendant l'accroche suffit à faire décrocher
+        status = FAIL
     checks.append({"name": "images brûlées (flash, surexposition)", "status": status,
                    "detail": f"{exp['burnt'] * 100:.1f} % des images (max "
-                             f"{burnt_max * 100:.0f} %)", "value": exp["burnt"]})
+                             f"{burnt_max * 100:.0f} %)"
+                             + (f" ; pendant l'accroche à {', '.join(f'{t:g} s' for t in hook)}"
+                                if hook else ""), "value": exp["burnt"]})
     blur_max = float(qa_cfg.get("max_blurred_ratio", 0.12))
     base = source_blur(plan) if plan.get("segments") else None
     added = exp["blurred"] - (base or 0.0)

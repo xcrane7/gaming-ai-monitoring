@@ -496,7 +496,9 @@ class Director:
             cur, nxt = self.plan.segments[k], self.plan.segments[k + 1]
             strong = any(e["kind"] == "explosion" for e in nxt.events)
             if cur.role == "teaser":
-                visible, choice = True, "fadewhite"
+                # pas de fondu au blanc ici : au milieu, l'image est 100 % blanche, en plein
+                # pendant l'accroche (vu sur le rendu réel à 1,5 s) -> zoom qui garde l'énergie
+                visible, choice = True, "zoomin"
             elif nxt.role == "climax":  # flash blanc avant le pic (zoomin si déjà flashé)
                 visible = True
                 choice = "fadewhite" if last != "fadewhite" else "zoomin"
@@ -594,7 +596,8 @@ class Director:
                 # cible sur le moment clé : climax, ou kill/headshot confirmé (IA ou OCR)
                 if st.get("focus_ring", True) and ("climax" in fx or ev.get("label") in
                                                    ("kill", "headshot", "clutch")):
-                    g.append({"type": "focus_ring", "start": t, "x": x, "y": y, "life": 0.9,
+                    g.append({"type": "focus_ring", "start": t, "x": x,
+                              "y": y - (0.06 if vertical else 0.0), "life": 0.9,
                               "radius": 0.12 if vertical else 0.08})
                 if "explosion_gfx" in fx:
                     g.append({"type": "explosion", "start": t, "x": x, "y": y, "seed": s})
