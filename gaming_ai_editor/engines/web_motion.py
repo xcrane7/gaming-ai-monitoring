@@ -155,7 +155,9 @@ function leave(n, frames, t, d, easing) {
 function textStyle(n, px) {
   n.style.fontFamily = S.font; n.style.fontWeight = S.weight; n.style.textTransform = S.case;
   n.style.fontSize = px + 'px'; n.style.letterSpacing = S.track; n.style.color = P.text || '#fff';
-  n.style.textShadow = `0 ${0.06 * px}px 0 rgba(0,0,0,.55), 0 0 ${0.22 * px}px rgba(0,0,0,.45)`; }
+  n.style.textShadow = `0 ${0.06 * px}px 0 rgba(0,0,0,.55), 0 0 ${0.22 * px}px rgba(0,0,0,.45)`;
+  // contour sombre dessiné DERRIÈRE les lettres : lisible sur une explosion ou un ciel clair
+  n.style.webkitTextStroke = `${Math.max(2, 0.085 * px)}px rgba(0,0,0,.85)`; n.style.paintOrder = 'stroke fill'; }
 function fit(n, maxW, maxH) {   // réduit la police jusqu'à ce que le texte tienne : jamais coupé
   let px = parseFloat(n.style.fontSize);
   for (let i = 0; i < 60 && (n.scrollWidth > maxW || (maxH && n.scrollHeight > maxH)); i++) {
@@ -179,7 +181,7 @@ function hook(it) {
     const s = el('span', 'display:inline-block;position:relative;padding:0 .08em', m);
     s.textContent = w; textStyle(s, px0); inner.push([s, i]);
     if (i === key) { const bg = el('span', `position:absolute;left:0;right:0;top:12%;bottom:4%;background:${P.accent};z-index:-1;transform-origin:left center`, s);
-      s.style.color = '#0b0b0b'; s.style.textShadow = 'none'; s.style.zIndex = 0; s.style.isolation = 'isolate';
+      s.style.color = '#0b0b0b'; s.style.textShadow = 'none'; s.style.webkitTextStroke = '0'; s.style.zIndex = 0; s.style.isolation = 'isolate';
       enter(bg, [{transform: 'scaleX(0)'}, {transform: 'scaleX(1)'}], it.start + 0.12 + i * S.stagger, S.in_s * 1.2); }
     box.appendChild(document.createTextNode(' '));
   });
@@ -211,7 +213,7 @@ function word(it) {
   const layers = [];
   if (S.rgb) for (const [c, dx] of [['#ff2a6d', -1], ['#05d9e8', 1]]) {
     const l = el('div', `position:absolute;left:0;top:0;color:${c};mix-blend-mode:screen;opacity:.85`, holder);
-    l.className = 'txt'; l.textContent = it.text || ''; textStyle(l, px); l.style.color = c; l.style.textShadow = 'none';
+    l.className = 'txt'; l.textContent = it.text || ''; textStyle(l, px); l.style.color = c; l.style.textShadow = 'none'; l.style.webkitTextStroke = '0';
     holder.insertBefore(l, main); layers.push([l, dx]); }
   const t0 = it.start, life = Math.max(0.5, it.end - it.start);
   // l'entrée du style l'emporte : un « slam » n'existe que dans les styles qui en ont un
@@ -268,7 +270,7 @@ function notify(it) {
   svg('circle', {cx: 12, cy: 12, r: 8, fill: 'none', stroke: '#0b0b0b', 'stroke-width': 2.6}, s);
   svg('path', {d: 'M12 1v6M12 17v6M1 12h6M17 12h6', stroke: '#0b0b0b', 'stroke-width': 2.6}, s);
   const t = el('div', `position:relative;padding:0 ${h * 0.75}px 0 ${h * 0.1}px`, box); t.className = 'txt';
-  t.textContent = it.text || ''; textStyle(t, h * 0.52); t.style.color = '#0b0b0b'; t.style.textShadow = 'none';
+  t.textContent = it.text || ''; textStyle(t, h * 0.52); t.style.color = '#0b0b0b'; t.style.textShadow = 'none'; t.style.webkitTextStroke = '0';
   fit(t, W * 0.7);
   enter(bar, [{clipPath: `inset(0 100% 0 0)`}, {clipPath: 'inset(0 0% 0 0)'}], it.start, 0.22);
   enter(t, [{transform: `translateX(${-30 * U}px)`, opacity: 0}, {transform: 'translateX(0)', opacity: 1}], it.start + 0.1, 0.22);
