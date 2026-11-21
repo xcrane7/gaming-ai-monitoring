@@ -1,5 +1,6 @@
 """Finition FFmpeg (skill edit-polish-ffmpeg) : punch-in net, vitesse et hauteur du son,
 dérive A/V, temps morts accélérés, sons variés, musique automatisée, coupes en J, whip."""
+import math
 import numpy as np
 import pytest
 
@@ -173,3 +174,27 @@ def test_whip_transition_between_similar_moments(cfg, tmp_path):
                     transitions=["whipleft"], transition_durations=[0.12])
     out = Renderer(cfg).render(plan, cfg.output_dir / "w.mp4", cfg.work_dir / "w")
     assert probe(out["path"]).duration == pytest.approx(plan.duration, abs=0.1)
+
+
+def test_energy_arc_builds_from_the_cold_open_to_the_climax():
+    """Cold open plein pot, montée qui repart 4 dB plus bas et remonte jusqu'au climax."""
+    from gaming_ai_editor.editor.plan import EditPlan, Segment
+    from gaming_ai_editor.editor.render import Renderer
+
+    segs = [Segment("a.mp4", 0, 2, role="teaser"), Segment("a.mp4", 10, 20, role="build"),
+            Segment("a.mp4", 30, 40, role="build"), Segment("a.mp4", 50, 60, role="climax")]
+    plan = EditPlan("short", 360, 640, 30, segments=segs)
+    expr = Renderer.energy_arc(plan)
+    offs = plan.offsets()
+    assert expr.startswith("volume='if(between(t,") and expr.endswith(":eval=frame,")
+    inner = expr[len("volume='"):expr.index("':eval")]
+
+    def gain(t):  # évalue l'expression FFmpeg avec Python (même syntaxe ici)
+        return eval(inner.replace("between(t,", "_between(t,").replace("if(", "_if("),
+                    {"t": t, "_between": lambda x, a, b: a <= x <= b,
+                     "_if": lambda c, a, b: a if c else b})
+
+    assert gain(1.0) == 1.0, "cold open à plein niveau"
+    assert abs(20 * math.log10(gain(offs[1])) + 4.0) < 0.01, "la montée repart 4 dB plus bas"
+    assert gain(offs[2]) > gain(offs[1]) and abs(gain(offs[3]) - 1.0) < 1e-6
+    assert Renderer.energy_arc(EditPlan("short", 360, 640, 30, segments=segs[:3])) == ""

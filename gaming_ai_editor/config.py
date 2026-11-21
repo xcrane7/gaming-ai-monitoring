@@ -112,6 +112,9 @@ DEFAULTS: dict[str, Any] = {
         "ai_captions": False,
         # cible animée qui se resserre sur l'action au climax et sur les kills confirmés
         "focus_ring": True,
+        # courbe d'énergie du son : cold open plein pot, montée qui repart 4 dB plus bas et
+        # remonte jusqu'au climax (sinon la normalisation aplatit tout)
+        "energy_arc": True,
         "music_generate": True,  # musique générée si assets/music est vide
         "beat_sync": True,
         "grade": True,

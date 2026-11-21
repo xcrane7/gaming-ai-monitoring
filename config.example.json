@@ -9,7 +9,8 @@
     "speed_up_dead_time": true,
     "dead_time_speed": 1.7,
     "ai_captions": false,
-    "focus_ring": true
+    "focus_ring": true,
+    "energy_arc": true
   },
   "short": {
     "target_seconds": 45,
@@ -81,7 +82,8 @@
     "style.ai_captions": "mots d'impact écrits par Claude sans entendre la vidéo (désactivé : clichés)",
     "style.focus_ring": "cible animée qui se resserre sur l'action au climax et sur les kills confirmés",
     "short.layout": "auto = plein écran (recadrage centré, ou qui suit l'action si elle bouge) | track | crop | blur | hybrid (zone 4:5 entre deux bandes floues)",
-    "qa.visual": "contrôle visuel des images rendues : images floues, brûlées, ternes ; un refus relance un rendu prudent"
+    "qa.visual": "contrôle visuel des images rendues : images floues, brûlées, ternes ; un refus relance un rendu prudent",
+    "style.energy_arc": "son : cold open plein pot, montée qui repart 4 dB plus bas et remonte jusqu'au climax"
   },
   "analysis": {
     "rerank": true,

@@ -300,6 +300,24 @@ class Renderer:
         return (f"if(between(t,{_f(build_a)},{_f(dip_a)}),{rise},"
                 f"if(between(t,{_f(dip_a)},{_f(drop)}),0.4,1))")
 
+    @staticmethod
+    def energy_arc(plan: EditPlan, dip_db: float = 4.0) -> str:
+        """Courbe d'énergie du mix : cold open à plein niveau (l'accroche doit frapper), la
+        montée repart {dip_db} dB plus bas et remonte régulièrement jusqu'au climax.
+        Sans cela, la normalisation rendait toute la vidéo aussi forte : aucune montée
+        (critique du rendu réel : énergie -0,9 dB du premier au dernier tiers)."""
+        roles = [s.role for s in plan.segments]
+        if "climax" not in roles:
+            return ""
+        offs = plan.offsets()
+        t_climax = offs[roles.index("climax")]
+        t_build = offs[1] if roles[0] == "teaser" and len(offs) > 1 else 0.0
+        if t_climax - t_build < 4.0:
+            return ""
+        low = 10 ** (-dip_db / 20)
+        ramp = f"({_f(low)}+{_f(1 - low)}*(t-{_f(t_build)})/{_f(t_climax - t_build)})"
+        return f"volume='if(between(t,{_f(t_build)},{_f(t_climax)}),{ramp},1)':eval=frame,"
+
     def _sfx_track(self, plan: EditPlan, work: Path, total: float) -> tuple[Path | None, int]:
         cues = list(plan.sfx or [])
         if not cues and self.cfg["sfx"]["enabled"] and plan.transition == "xfade" \
@@ -411,7 +429,9 @@ class Renderer:
                if len(mix_inputs) > 1 else f"{mixed}")
         tail = (f"afade=t=out:st={max(0.0, total - 0.04):.3f}:d=0.04" if plan.loop
                 else f"afade=t=out:st={fade_out:.3f}:d=0.35")
-        graph.append(f"{mix}loudnorm=I={lufs}:TP=-1.5:LRA=11,aresample=48000,{tail}[aout]")
+        arc = self.energy_arc(plan) if style and plan.format == "short" and \
+            (plan.style or {}).get("energy_arc", self.cfg["style"].get("energy_arc", True)) else ""
+        graph.append(f"{mix}{arc}loudnorm=I={lufs}:TP=-1.5:LRA=11,aresample=48000,{tail}[aout]")
 
         def build(family: str) -> list[str]:
             return [*inputs, "-filter_complex", ";".join(graph),
