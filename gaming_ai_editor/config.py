@@ -182,6 +182,7 @@ DEFAULTS: dict[str, Any] = {
         # contrôle visuel des images rendues (qa/visual.py) : refuse un montage plus flou
         # que le jeu ou avec des images brûlées ; un refus relance un rendu « prudent »
         "visual": True,
+        "blur_check": False,  # flou ajouté, image par image : pas encore fiable (faux positifs)
         "max_blurred_ratio": 0.12,
         "max_burnt_ratio": 0.06,
         "max_flat_ratio": 0.15,

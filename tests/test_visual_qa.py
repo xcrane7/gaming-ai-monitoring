@@ -32,7 +32,8 @@ def _plan(src):
 
 
 def _blur_check(render, src):
-    return {c["name"]: c for c in run_visual_qa(render, _plan(src), DEFAULTS["qa"])}[
+    qa = {**DEFAULTS["qa"], "blur_check": True}  # expérimental : désactivé par défaut
+    return {c["name"]: c for c in run_visual_qa(render, _plan(src), qa)}[
         "images floues ajoutées (effets, traînées)"]
 
 

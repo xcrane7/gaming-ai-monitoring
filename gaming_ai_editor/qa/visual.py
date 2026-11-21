@@ -149,7 +149,9 @@ def run_visual_qa(render: str | Path, plan: dict, qa_cfg: dict) -> list[dict]:
                              + (f" ; pendant l'accroche à {', '.join(f'{t:g} s' for t in hook)}"
                                 if hook else ""), "value": exp["burnt"]})
     blur_max = float(qa_cfg.get("max_blurred_ratio", 0.12))
-    blur = added_blur(render, plan)
+    # désactivé par défaut : faux positifs sur le gameplay réel (16 %) et sur les vidéos de
+    # test (23 %) alors qu'aucun flou n'était ajouté ; à réactiver une fois fiabilisé
+    blur = added_blur(render, plan) if qa_cfg.get("blur_check", False) else None
     if blur is not None:
         added = blur["added"]
         # avertissement seulement : sur le gameplay FPS réel, les paires d'images sont décalées
