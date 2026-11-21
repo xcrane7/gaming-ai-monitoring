@@ -192,7 +192,7 @@ cadrage vertical `crop` / `blur` / `hybrid`, encodeur, musique, sous-titres, che
 
 ```
 pip install pytest
-python -m pytest tests                      100 tests, environ 20 minutes
+python -m pytest tests                      160 tests, environ 18 minutes
 GAE_TEST_NETWORK=1 python -m pytest tests   ajoute le cycle de recherche en ligne
 ```
 
@@ -201,7 +201,7 @@ d'action et les changements de plan, ce qui permet de vérifier objectivement la
 
 ## État des vérifications
 
-Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 100 tests :
+Vérifié par des tests exécutés (Linux, Python 3.13, FFmpeg 6.1, sans GPU) — 160 tests :
 
 - montage complet d'un vrai gameplay FPS 4K : Short 1080×1920 de 43,5 s, 20 contrôles QA
   réussis, impacts sonores à 1 ms de l'instant prévu, originaux intacts ;
