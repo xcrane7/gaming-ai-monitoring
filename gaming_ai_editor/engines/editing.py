@@ -823,9 +823,9 @@ class Director:
         if not self.cfg["style"]["enabled"] or not plan.segments:
             return
         self.choose_events()
-        self.direction_notes()
         self.drop_dead_clips()
         self.choose_ramps()
+        self.direction_notes()  # après le ralenti : le climax promu est compté comme tel
         self.speed_up_dead_time()
         self.choose_transitions()  # avant la musique : les coupes se calent sur le tempo
         self.plan_music()
